@@ -305,7 +305,7 @@ fn verified_content_object(store: &Path, object: &Path) -> bool {
 /// `/usr/bin/ld` is a launcher that looks the same program up on every start, a measurable share of an edit's link;
 /// it stays the answer when the caller selected a toolchain by name (`TOOLCHAINS`), when the link names no SDK, and
 /// when the SDK's developer directory holds no `ld`.
-fn linker(arguments: &[String], toolchain_selected: bool) -> PathBuf {
+pub(crate) fn linker(arguments: &[String], toolchain_selected: bool) -> PathBuf {
     let sdk = arguments
         .windows(2)
         .find(|pair| pair[0] == "-syslibroot")

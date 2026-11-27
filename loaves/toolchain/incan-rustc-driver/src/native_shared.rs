@@ -279,11 +279,22 @@ fn recipe(
         }
     }
 
-    // ---- Target and inherited native link configuration ----
-    let environment = ["MACOSX_DEPLOYMENT_TARGET", "DEVELOPER_DIR", "LIBRARY_PATH", "PATH"]
-        .map(|name| (name, std::env::var_os(name)));
+    // ---- Selected link tools, target and inherited native link configuration ----
+    let mut tools = Vec::new();
+    for tool in link_tools(&sdk, &identity.target)? {
+        let input = observed(&tool)?;
+        tools.push(content_identity(store, &input)?);
+        inputs.push(input);
+    }
+    let environment = [
+        "MACOSX_DEPLOYMENT_TARGET",
+        "DEVELOPER_DIR",
+        "LIBRARY_PATH",
+        "TOOLCHAINS",
+    ]
+    .map(|name| (name, std::env::var_os(name)));
     let description = format!(
-        "incan.native-shared/2\n{root}\n{}\n{}\n{}\n{sdk}\n{environment:?}\n{content:?}\n{system:?}\n{system_content:?}",
+        "incan.native-shared/3\n{root}\n{}\n{}\n{}\n{sdk}\n{environment:?}\n{content:?}\n{tools:?}\n{system:?}\n{system_content:?}",
         identity.sysroot.display(),
         identity.toolchain,
         identity.target
@@ -292,6 +303,36 @@ fn recipe(
         key: hex::encode(Sha256::digest(description.as_bytes())),
         inputs,
     })
+}
+
+/// The programs a carrier's link runs, resolved as that link resolves them, so the caller's raw search path is not
+/// itself an input. On Darwin they are the development linker beside this driver, the `ld` it selects for the SDK, and
+/// only when no SDK is selected the `xcrun` the search path names, which rustc runs to discover one. Elsewhere rustc
+/// links through the `cc` the search path names.
+fn link_tools(sdk: &str, target: &str) -> Result<Vec<PathBuf>, DriverError> {
+    let searched = |program: &str| {
+        std::env::var_os("PATH").and_then(|path| {
+            std::env::split_paths(&path)
+                .map(|directory| directory.join(program))
+                .find(|candidate| candidate.is_file())
+        })
+    };
+    if !target.ends_with("-apple-darwin") {
+        return Ok(searched("cc").into_iter().collect());
+    }
+    let selection = if sdk.is_empty() {
+        Vec::new()
+    } else {
+        vec!["-syslibroot".to_owned(), sdk.to_owned()]
+    };
+    let mut tools = vec![
+        crate::adapter::development_linker().map_err(io_error)?,
+        crate::adapter::stable_link::linker(&selection, std::env::var_os("TOOLCHAINS").is_some()),
+    ];
+    if sdk.is_empty() {
+        tools.extend(searched("xcrun"));
+    }
+    Ok(tools)
 }
 
 /// Reuse only a completed carrier and transitive native inputs whose complete filesystem generations still match.
