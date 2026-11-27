@@ -70,12 +70,19 @@ impl RecordedLayouts {
 #[cfg(test)]
 thread_local! {
     static COMPUTED_WITNESSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static COMPUTED_CARRIER_DESCRIPTIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// How many layout witnesses this thread has digested; a test counts them.
 #[cfg(test)]
 pub fn computed_layout_witnesses() -> usize {
     COMPUTED_WITNESSES.with(std::cell::Cell::get)
+}
+
+/// How many carrier descriptions this thread has constructed, including unnamed ones.
+#[cfg(test)]
+pub fn computed_carrier_descriptions() -> usize {
+    COMPUTED_CARRIER_DESCRIPTIONS.with(std::cell::Cell::get)
 }
 
 /// Count one digested layout witness for a test.
@@ -282,6 +289,8 @@ fn source_nominal(
 /// The native name numbers carriers in admission order, which another module's types change, so it never names one.
 /// A carrier without an encodable checked type stays unnamed, and a product refuses to name it.
 pub fn carrier_nominal(declaration: &EnumDeclaration) -> ProductNominal {
+    #[cfg(test)]
+    COMPUTED_CARRIER_DESCRIPTIONS.with(|count| count.set(count.get() + 1));
     let unnamed = ProductNominal {
         kind: NominalKind::Enum,
         identity: String::new(),
