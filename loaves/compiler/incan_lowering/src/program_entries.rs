@@ -329,7 +329,7 @@ impl ModuleAdmission<'_> {
 
 type OrdinaryFrame = (FunctionSlot, Vec<ExternalFunction>, Vec<Instance>, Vec<Function>);
 
-/// Use a retained positioned inventory only when all current ordinary bodies have their exact checked slots.
+/// Lend positioned slots only after every current ordinary body matches the authenticated retained roster.
 fn positioned_slots(
     page: &ModulePage,
     positions: &[usize],
@@ -343,6 +343,7 @@ fn positioned_slots(
     let mut offered = BTreeSet::new();
     let mut members = BTreeMap::new();
     let mut resolved = BTreeMap::new();
+    let mut carries_helpers = false;
     let allows = |path: &str| sealed_runtime_path(context, path);
     for &position in positions {
         let body = &context.bodies[position];
@@ -363,6 +364,7 @@ fn positioned_slots(
         };
         let key = (inputs.digest(), identity, span.column);
         let (kept_key, member) = slots.get_key_value(&key)?;
+        carries_helpers |= member.lending.is_none();
         let placed = &member.product.function;
         let nominals = placed.nominals();
         if !member.applicability.applies_to(placed, &keyed.linked, &allows) || nominals.len() != member.references.len()
@@ -387,7 +389,15 @@ fn positioned_slots(
             return None;
         }
     }
-    (members.len() == slots.len() && page.current_positioned_bytes()).then_some(members)
+    if members.len() != slots.len() || !page.current_positioned_bytes() {
+        return None;
+    }
+    if carries_helpers {
+        // The ordinary restore still introduces the carried helpers in order. Only placement-independent siblings
+        // can keep their slots across that work.
+        members.retain(|_, member| member.lends_unchanged_in_mixed_module());
+    }
+    (!members.is_empty()).then_some(members)
 }
 
 /// Read only producer-admitted products, or lower normally and retain an exact witnessed result.
@@ -414,17 +424,18 @@ fn lower_ordinary_frame(
         .retained
         .as_mut()
         .and_then(|slots| slots.remove(&body.direct_call_id))
+        && let Some((slot, runtime)) = &member.lending
     {
         let event = &member.product.event;
         admission.restored.push(AdmittedFunction {
-            function: member.slot.name.clone(),
+            function: slot.name.clone(),
             identity: event.identity.clone(),
             references: member.references.iter().map(event_reference).collect(),
             placement: None,
         });
         admission.report_product(&member.product, &[]);
         frame_product("direct", "ordinary", &frame_label(body));
-        return Ok((member.slot.clone(), member.runtime.clone(), Vec::new(), Vec::new()));
+        return Ok((slot.clone(), runtime.clone(), Vec::new(), Vec::new()));
     }
     match restore_admitted(context, program, body, frame, intrinsics, keyed, admission) {
         Admission::Restored(restored) => {
@@ -787,18 +798,15 @@ fn restore_admitted(
         None
     };
     admission.report_product(&payload, &restored.frames);
-    let no_deferred_frames = restored.slot.future_callee.is_none() && restored.frames.is_empty();
-    if admission.seeding && !moved && no_deferred_frames && requests.is_empty() {
+    if admission.seeding && !moved && restored.slot.future_callee.is_none() && requests.is_empty() {
         let key = (inputs.digest(), current_identity.clone(), span.column);
+        let lending = restored
+            .frames
+            .is_empty()
+            .then_some((&restored.slot, restored.runtime.as_slice()));
         admission.finalized.insert(
             key,
-            FinalizedMember::retain(
-                payload,
-                resolved,
-                &restored.slot,
-                &restored.runtime,
-                restored.applicability,
-            ),
+            FinalizedMember::retain(payload, resolved, lending, restored.applicability),
         );
     }
     admission.restored.push(AdmittedFunction {
