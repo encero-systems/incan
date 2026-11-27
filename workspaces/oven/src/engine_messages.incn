@@ -245,7 +245,9 @@ pub model Query:
         cursor = reader.text()?
         row_limit = int(reader.number(4)?)
         byte_limit = int(reader.number(4)?)
-        return Ok(Query(snapshot=snapshot, query_root=query_root, cursor=cursor, row_limit=row_limit, byte_limit=byte_limit))
+        return Ok(
+            Query(snapshot=snapshot, query_root=query_root, cursor=cursor, row_limit=row_limit, byte_limit=byte_limit),
+        )
 
 
 pub model Page:
@@ -362,9 +364,7 @@ pub model Cancelled:
 
     pub def encode(self) -> Result[bytes, Refusal]:
         """Encode the exact effect disposition, never a guessed numeric boolean."""
-        return Ok(
-            joined([scalar(1, 2), text(self.interest_token)?, scalar(self.effects_stopped.tag(), 2)]),
-        )
+        return Ok(joined([scalar(1, 2), text(self.interest_token)?, scalar(self.effects_stopped.tag(), 2)]))
 
     @staticmethod
     pub def decode(mut reader: Decoder) -> Result[Self, Refusal]:
