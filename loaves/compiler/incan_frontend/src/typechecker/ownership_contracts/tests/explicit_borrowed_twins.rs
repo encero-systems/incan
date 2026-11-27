@@ -5,6 +5,7 @@
 //! diagnostics of the two spellings are identical, refusals included.
 
 use super::*;
+use crate::test_rows::{SourceRow, run_source_rows};
 
 /// The native spellings of a shared and an exclusive borrow, padded to the width of the explicit ones.
 const NATIVE: (&str, &str) = ("&         {}", "&mut         {}");
@@ -72,29 +73,6 @@ fn messages(checker: &TypeChecker) -> Vec<String> {
 const ITEM: &str =
     "model Item:\n    name: str\n    count: int\n\n    def label(self) -> str:\n        return self.name\n\n";
 const COUNTER: &str = "model Counter:\n    value: int\n\n    def bump(mut self) -> None:\n        self.value += 1\n\n    def read(self) -> int:\n        return self.value\n\n";
-
-/// The platform trace writer's shapes: a borrowed text handed on through a call whose result the body reads, and a
-/// borrowed record read by a method. Accepted in both spellings, with no ownership contract and no source-flow proof.
-#[test]
-fn trace_writer_shapes_check_as_their_reference_twins() -> Result<(), Box<dyn std::error::Error>> {
-    let template = "model TraceRecord:\n    name: str\n    size: int\n\ndef echo(text: str) -> str:\n    return text\n\ndef measure(text: {borrow:str}) -> int:\n    return len(echo(text))\n\nclass Writer:\n    pub rows: list[str]\n\n    pub def append(mut self, text: {borrow:str}) -> int:\n        self.rows.append(echo(text))\n        return len(self.rows)\n\n    pub def write_record(mut self, row: {borrow:TraceRecord}) -> int:\n        self.rows.append(echo(row.name))\n        return row.size + len(self.rows)\n\n    pub def record(mut self, row: {borrow:TraceRecord}) -> int:\n        return self.write_record(row)\n\ndef main() -> int:\n    mut writer = Writer(rows=[])\n    row = TraceRecord(name=\"a\", size=1)\n    return writer.append(\"x\") + writer.write_record(row) + writer.record(row) + measure(\"y\")\n";
-    let checker = check_twins(template)?;
-    assert!(checker.errors.is_empty(), "{:?}", checker.errors);
-    let contracts: Vec<_> = checker
-        .type_info
-        .declarations
-        .ownership_contracts
-        .keys()
-        .map(|identity| identity.declaration_name.clone())
-        .collect();
-    assert!(contracts.is_empty(), "{contracts:?}");
-    assert!(
-        checker.type_info.protocols.explicit_input_flow.is_empty(),
-        "{:?}",
-        flow_summary(&checker)
-    );
-    Ok(())
-}
 
 /// Reads through a shared borrow: fields, methods, measuring, indexing, iteration, membership and comparison.
 #[test]
@@ -301,27 +279,6 @@ fn borrowed_results_cannot_return_values_created_in_the_body() -> Result<(), Box
     Ok(())
 }
 
-/// A borrow-only signature takes the native route even when its borrowed result is exactly its source: no ownership
-/// contract and no whole-body proof for it or for its caller. This is the guarded native callback's shape: a caller
-/// matches on a lookup keyed through the returned borrow.
-#[test]
-fn exact_borrowed_results_of_borrow_only_signatures_take_the_native_route() -> Result<(), Box<dyn std::error::Error>> {
-    let template = "model Key:\n    name: str\n\ndef borrowed_key(value: {borrow:Key}) -> {borrow:Key} from value:\n    return value\n\ndef lookup(entries: dict[str, int]) -> int:\n    key = Key(name=\"key\")\n    match entries.get(borrowed_key(key).name):\n        Some(value) =>\n            println(value)\n            return value\n        None => return 0\n";
-    let checker = check_twins(template)?;
-    assert!(checker.errors.is_empty(), "{:?}", checker.errors);
-    assert!(
-        checker.type_info.declarations.ownership_contracts.is_empty(),
-        "{:?}",
-        checker.type_info.declarations.ownership_contracts.keys()
-    );
-    assert!(
-        checker.type_info.protocols.explicit_input_flow.is_empty(),
-        "{:?}",
-        checker.type_info.protocols.explicit_input_flow.keys()
-    );
-    Ok(())
-}
-
 /// A caller holds such a result as a loan of the argument it borrows from, alive while the result is used: an edit of
 /// that argument while the result is still read is refused with INCAN-T0126 in both spellings, and the same edit after
 /// the last read is accepted.
@@ -416,22 +373,6 @@ fn rust_reference_spellings_are_refused_at_every_annotation_position() -> Result
     Ok(())
 }
 
-/// A function with borrowed parameters is one callable type in both spellings, and an imported function with
-/// borrowed parameters takes owned locals on both dependency routes.
-#[test]
-fn callable_and_imported_borrows_check_as_their_reference_twins() -> Result<(), Box<dyn std::error::Error>> {
-    let template = "def compare(left: {borrow:float}, right: {borrow:float}) -> int:\n    return 0\n\ndef apply(order: ({borrow:float}, {borrow:float}) -> int) -> int:\n    return 0\n\ndef main() -> int:\n    return apply(compare)\n";
-    let checker = check_twins(template)?;
-    assert!(checker.errors.is_empty(), "{:?}", checker.errors);
-    let provider = "pub model Entry:\n    pub count: int\n\npub def total(values: {borrow:list[Entry]}) -> int:\n    return len(values)\n\npub def bump(mut counter: {borrow_mut:Entry}) -> None:\n    counter.count += 1\n";
-    let consumer = "from views import Entry, bump, total\n\ndef main() -> int:\n    mut entry = Entry(count=1)\n    bump(entry)\n    return total([entry]) + entry.count\n";
-    // The provider is spelled the Incan way: its Rust spelling is refused before it publishes anything.
-    for (route, explicit) in super::one_type::consumer_checkers(&spelled(provider, EXPLICIT), consumer)? {
-        assert!(explicit.errors.is_empty(), "{route}: {:?}", explicit.errors);
-    }
-    Ok(())
-}
-
 /// A borrow nested in a callable type, in a Rust type's argument or inside a parameter or binding annotation is the
 /// native reference in both spellings: a callback over a borrowed item, given a function and a closure; a Rust
 /// generic over exclusive borrows, as a parameter and as a result; and a local list of borrows.
@@ -493,16 +434,6 @@ fn separate_loans_outside_the_proof_are_accepted() -> Result<(), Box<dyn std::er
     Ok(())
 }
 
-/// A body that still needs the whole-body proof (it calls a returned-view function) calls borrow-only callees in
-/// both spellings: a generic one, an async one awaited, and an async method through a borrowed receiver.
-#[test]
-fn proof_bodies_call_borrow_only_callees() -> Result<(), Box<dyn std::error::Error>> {
-    let template = "class Selection[R]:\n    pub reader: R\n    pub key: int\n\nclass Buffer:\n    pub items: list[int]\n\n    pub async def size_plus(self, extra: {borrow:int}) -> int:\n        return len(self.items) + extra\n\ndef select(reader: Borrowed[list[int]]) -> Selection[Borrowed[list[int]]] from reader:\n    return Selection[Borrowed[list[int]]](reader=reader, key=0)\n\ndef selected_key[R](selection: {borrow:Selection[R]}) -> int:\n    return selection.key\n\nasync def measure(buffer: {borrow:Buffer}) -> int:\n    return len(buffer.items)\n\nasync def total(mut buffer: {borrow_mut:Buffer}) -> int:\n    first = await measure(buffer)\n    return await buffer.size_plus(first)\n\nasync def use(mut values: {borrow_mut:list[int]}, mut buffer: {borrow_mut:Buffer}) -> int:\n    selection = select(values)\n    key = selected_key(selection)\n    return key + await total(buffer)\n";
-    let checker = check_twins(template)?;
-    assert!(checker.errors.is_empty(), "{:?}", checker.errors);
-    Ok(())
-}
-
 const TRACE_STATE: &str = "class State:\n    pub active: str\n    pub count: int\n    pub items: list[int]\n\ndef write_end(mut state: {borrow_mut:State}, identifier: str) -> int:\n    state.count += 1\n    return len(identifier)\n\ndef check(mut state: {borrow_mut:State}, flag: bool) -> int:\n    state.count += 1\n    return state.count\n\ndef bump(mut state: {borrow_mut:State}) -> str:\n    state.count += 1\n    return state.active\n\ndef take_first(mut items: {borrow_mut:list[int]}) -> str:\n    return \"first\"\n\nclass Counter:\n    pub value: int\n\n    pub def add(mut self, step: int) -> None:\n        self.value += step\n\n";
 
 /// Rust makes the implicit reborrow of a `&mut` binding passed as an argument, or of a method's receiver, a two-phase
@@ -544,20 +475,6 @@ fn two_phase_borrows_still_refuse_later_exclusive_uses() -> Result<(), Box<dyn s
     Ok(())
 }
 
-/// A builtin collection method through a borrow reads, or for an exclusive borrow changes, the value the borrow
-/// names, in both spellings, as the explicit spelling did before the two spellings became one type: `append` through
-/// an exclusive borrow, `count`, `keys` and `len` through a shared one. Changing the value through a shared borrow is
-/// still refused, in both spellings.
-#[test]
-fn builtin_methods_reach_through_borrows() -> Result<(), Box<dyn std::error::Error>> {
-    let template = "def grow(mut items: {borrow_mut:list[int]}) -> None:\n    items.append(1)\n\ndef size(items: {borrow:list[int]}) -> int:\n    return items.count(1) + len(items)\n\ndef names(table: {borrow:dict[str, int]}) -> int:\n    return len(table.keys())\n\ndef main() -> int:\n    mut values = [1]\n    grow(values)\n    table = {\"a\": 1}\n    return size(values) + names(table)\n";
-    let checker = check_twins(template)?;
-    assert!(checker.errors.is_empty(), "{:?}", checker.errors);
-    let refused = check_twins("def bad(items: {borrow:list[int]}) -> None:\n    items.append(1)\n")?;
-    assert!(!refused.errors.is_empty(), "a shared borrow changed its list");
-    Ok(())
-}
-
 /// A package's API metadata, which a consumer in another package reads for a module's functions, publishes a borrow
 /// the same way in both spellings: a borrow-only function's borrowed parameter and result are the native reference, as
 /// its checked signature says. (A `Borrowed[str]` parameter published as an explicit contract mode made a consumer
@@ -586,59 +503,6 @@ fn api_metadata_publishes_borrows_as_their_reference_twins() -> Result<(), Box<d
     assert!(
         explicit.iter().all(|declaration| !declaration.contains("\"Borrowed\"")),
         "{explicit:?}"
-    );
-    Ok(())
-}
-
-/// Membership of a borrow in a list of borrows compares borrows, in both spellings (the iterator fixture's
-/// `value in values` with `values: list[&int]`).
-#[test]
-fn borrows_are_members_of_lists_of_borrows() -> Result<(), Box<dyn std::error::Error>> {
-    let template = "def has_reference(value: {borrow:int}) -> bool:\n    values: list[{borrow:int}] = [value]\n    return value in values\n";
-    let checker = check_twins(template)?;
-    assert!(checker.errors.is_empty(), "{:?}", checker.errors);
-    Ok(())
-}
-
-/// A method the builtin dictionary does not define keeps the borrow as its receiver, so it resolves as a native method
-/// of the borrowed value, in both spellings. No Rust metadata is loaded here, so the native method's own signature is
-/// what remains unadmitted, not the method on the builtin dictionary.
-#[test]
-fn native_methods_of_a_borrowed_collection_keep_the_borrow() -> Result<(), Box<dyn std::error::Error>> {
-    let template = "def empty(entries: {borrow_mut:dict[str, int]}) -> bool:\n    return entries.is_empty()\n";
-    let checker = check_twins(template)?;
-    assert_eq!(
-        messages(&checker),
-        vec!["Rust method `rust::std::collections::HashMap::is_empty` has no admitted callable signature"],
-        "{:?}",
-        checker.errors
-    );
-    Ok(())
-}
-
-/// A task bound by a runtime future capability may outlive the call that starts it, so an async call that lends a
-/// borrow is refused with `INCAN-T0123` in the checker, in both spellings; an owned argument is not.
-#[test]
-fn a_spawned_task_cannot_hold_a_borrow() -> Result<(), Box<dyn std::error::Error>> {
-    let template = "from rust::incan_std_primitives::task import RuntimeFuture\n\nmodel Buffer:\n    items: list[int]\n\ndef spawn[T, TaskFuture with RuntimeFuture[T]](task: TaskFuture) -> None:\n    pass\n\nasync def measure(buffer: {borrow:Buffer}) -> int:\n    return len(buffer.items)\n\nasync def measure_owned(buffer: Buffer) -> int:\n    return len(buffer.items)\n\nasync def start(buffer: {borrow:Buffer}) -> None:\n    spawn(measure(buffer))\n\nasync def start_owned(buffer: Buffer) -> None:\n    spawn(measure_owned(buffer))\n";
-    let checker = check_twins(template)?;
-    let codes: Vec<_> = checker.errors.iter().map(|error| error.stable_code()).collect();
-    assert_eq!(codes, vec![Some("INCAN-T0123")], "{:?}", checker.errors);
-    Ok(())
-}
-
-/// One type (RFC 164): an owned `Err` payload takes a clone of a borrowed value, so a borrowed generic argument whose
-/// type parameter has no `Clone` bound is refused in the checker, in both spellings; a borrowed value with a clone, a
-/// bounded type parameter's included, is admitted.
-#[test]
-fn a_borrowed_value_without_a_clone_is_not_an_owned_error_payload() -> Result<(), Box<dyn std::error::Error>> {
-    let template = "def borrowed_error[E](error: {borrow:E}) -> Result[None, E]:\n    return Err(error)\n\ndef borrowed_text(error: {borrow:str}) -> Result[None, str]:\n    return Err(error)\n\ndef bounded_error[E with Clone](error: {borrow:E}) -> Result[None, E]:\n    return Err(error)\n";
-    let checker = check_twins(template)?;
-    assert_eq!(checker.errors.len(), 1, "{:?}", checker.errors);
-    assert!(
-        checker.errors[0].message.starts_with("This use needs its own 'E'"),
-        "{:?}",
-        checker.errors
     );
     Ok(())
 }
@@ -676,3 +540,149 @@ fn library_metadata_keeps_an_exclusive_borrow_exclusive() -> Result<(), Box<dyn 
     }
     Ok(())
 }
+
+#[test]
+fn twin_cases() {
+    run_source_rows(TWIN_CASES, check_twins);
+}
+
+const TWIN_CASES: &[SourceRow<TypeChecker>] = &[
+    // The platform trace writer's shapes: a borrowed text handed on through a call whose result the body reads, and a
+    // borrowed record read by a method. Accepted in both spellings, with no ownership contract and no source-flow
+    // proof.
+    SourceRow {
+        name: "trace_writer_shapes_check_as_their_reference_twins",
+        source: "model TraceRecord:\n    name: str\n    size: int\n\ndef echo(text: str) -> str:\n    return text\n\ndef measure(text: {borrow:str}) -> int:\n    return len(echo(text))\n\nclass Writer:\n    pub rows: list[str]\n\n    pub def append(mut self, text: {borrow:str}) -> int:\n        self.rows.append(echo(text))\n        return len(self.rows)\n\n    pub def write_record(mut self, row: {borrow:TraceRecord}) -> int:\n        self.rows.append(echo(row.name))\n        return row.size + len(self.rows)\n\n    pub def record(mut self, row: {borrow:TraceRecord}) -> int:\n        return self.write_record(row)\n\ndef main() -> int:\n    mut writer = Writer(rows=[])\n    row = TraceRecord(name=\"a\", size=1)\n    return writer.append(\"x\") + writer.write_record(row) + writer.record(row) + measure(\"y\")\n",
+        check: |_source, checker| {
+            assert!(checker.errors.is_empty(), "{:?}", checker.errors);
+            let contracts: Vec<_> = checker
+                .type_info
+                .declarations
+                .ownership_contracts
+                .keys()
+                .map(|identity| identity.declaration_name.clone())
+                .collect();
+            assert!(contracts.is_empty(), "{contracts:?}");
+            assert!(
+                checker.type_info.protocols.explicit_input_flow.is_empty(),
+                "{:?}",
+                flow_summary(&checker)
+            );
+            Ok(())
+        },
+    },
+    // A borrow-only signature takes the native route even when its borrowed result is exactly its source: no ownership
+    // contract and no whole-body proof for it or for its caller. This is the guarded native callback's shape: a caller
+    // matches on a lookup keyed through the returned borrow.
+    SourceRow {
+        name: "exact_borrowed_results_of_borrow_only_signatures_take_the_native_route",
+        source: "model Key:\n    name: str\n\ndef borrowed_key(value: {borrow:Key}) -> {borrow:Key} from value:\n    return value\n\ndef lookup(entries: dict[str, int]) -> int:\n    key = Key(name=\"key\")\n    match entries.get(borrowed_key(key).name):\n        Some(value) =>\n            println(value)\n            return value\n        None => return 0\n",
+        check: |_source, checker| {
+            assert!(checker.errors.is_empty(), "{:?}", checker.errors);
+            assert!(
+                checker.type_info.declarations.ownership_contracts.is_empty(),
+                "{:?}",
+                checker.type_info.declarations.ownership_contracts.keys()
+            );
+            assert!(
+                checker.type_info.protocols.explicit_input_flow.is_empty(),
+                "{:?}",
+                checker.type_info.protocols.explicit_input_flow.keys()
+            );
+            Ok(())
+        },
+    },
+    // A function with borrowed parameters is one callable type in both spellings, and an imported function with
+    // borrowed parameters takes owned locals on both dependency routes.
+    SourceRow {
+        name: "callable_and_imported_borrows_check_as_their_reference_twins",
+        source: "def compare(left: {borrow:float}, right: {borrow:float}) -> int:\n    return 0\n\ndef apply(order: ({borrow:float}, {borrow:float}) -> int) -> int:\n    return 0\n\ndef main() -> int:\n    return apply(compare)\n",
+        check: |_source, checker| {
+            assert!(checker.errors.is_empty(), "{:?}", checker.errors);
+            let provider = "pub model Entry:\n    pub count: int\n\npub def total(values: {borrow:list[Entry]}) -> int:\n    return len(values)\n\npub def bump(mut counter: {borrow_mut:Entry}) -> None:\n    counter.count += 1\n";
+            let consumer = "from views import Entry, bump, total\n\ndef main() -> int:\n    mut entry = Entry(count=1)\n    bump(entry)\n    return total([entry]) + entry.count\n";
+            // The provider is spelled the Incan way: its Rust spelling is refused before it publishes anything.
+            for (route, explicit) in super::one_type::consumer_checkers(&spelled(provider, EXPLICIT), consumer)? {
+                assert!(explicit.errors.is_empty(), "{route}: {:?}", explicit.errors);
+            }
+            Ok(())
+        },
+    },
+    // A body that still needs the whole-body proof (it calls a returned-view function) calls borrow-only callees in
+    // both spellings: a generic one, an async one awaited, and an async method through a borrowed receiver.
+    SourceRow {
+        name: "proof_bodies_call_borrow_only_callees",
+        source: "class Selection[R]:\n    pub reader: R\n    pub key: int\n\nclass Buffer:\n    pub items: list[int]\n\n    pub async def size_plus(self, extra: {borrow:int}) -> int:\n        return len(self.items) + extra\n\ndef select(reader: Borrowed[list[int]]) -> Selection[Borrowed[list[int]]] from reader:\n    return Selection[Borrowed[list[int]]](reader=reader, key=0)\n\ndef selected_key[R](selection: {borrow:Selection[R]}) -> int:\n    return selection.key\n\nasync def measure(buffer: {borrow:Buffer}) -> int:\n    return len(buffer.items)\n\nasync def total(mut buffer: {borrow_mut:Buffer}) -> int:\n    first = await measure(buffer)\n    return await buffer.size_plus(first)\n\nasync def use(mut values: {borrow_mut:list[int]}, mut buffer: {borrow_mut:Buffer}) -> int:\n    selection = select(values)\n    key = selected_key(selection)\n    return key + await total(buffer)\n",
+        check: |_source, checker| {
+            assert!(checker.errors.is_empty(), "{:?}", checker.errors);
+            Ok(())
+        },
+    },
+    // A builtin collection method through a borrow reads, or for an exclusive borrow changes, the value the borrow
+    // names, in both spellings, as the explicit spelling did before the two spellings became one type: `append`
+    // through an exclusive borrow, `count`, `keys` and `len` through a shared one. Changing the value through a
+    // shared borrow is still refused, in both spellings.
+    SourceRow {
+        name: "builtin_methods_reach_through_borrows",
+        source: "def grow(mut items: {borrow_mut:list[int]}) -> None:\n    items.append(1)\n\ndef size(items: {borrow:list[int]}) -> int:\n    return items.count(1) + len(items)\n\ndef names(table: {borrow:dict[str, int]}) -> int:\n    return len(table.keys())\n\ndef main() -> int:\n    mut values = [1]\n    grow(values)\n    table = {\"a\": 1}\n    return size(values) + names(table)\n",
+        check: |_source, checker| {
+            assert!(checker.errors.is_empty(), "{:?}", checker.errors);
+            let refused = check_twins("def bad(items: {borrow:list[int]}) -> None:\n    items.append(1)\n")?;
+            assert!(!refused.errors.is_empty(), "a shared borrow changed its list");
+            Ok(())
+        },
+    },
+    // Membership of a borrow in a list of borrows compares borrows, in both spellings (the iterator fixture's
+    // `value in values` with `values: list[&int]`).
+    SourceRow {
+        name: "borrows_are_members_of_lists_of_borrows",
+        source: "def has_reference(value: {borrow:int}) -> bool:\n    values: list[{borrow:int}] = [value]\n    return value in values\n",
+        check: |_source, checker| {
+            assert!(checker.errors.is_empty(), "{:?}", checker.errors);
+            Ok(())
+        },
+    },
+    // A method the builtin dictionary does not define keeps the borrow as its receiver, so it resolves as a native
+    // method of the borrowed value, in both spellings. No Rust metadata is loaded here, so the native method's own
+    // signature is what remains unadmitted, not the method on the builtin dictionary.
+    SourceRow {
+        name: "native_methods_of_a_borrowed_collection_keep_the_borrow",
+        source: "def empty(entries: {borrow_mut:dict[str, int]}) -> bool:\n    return entries.is_empty()\n",
+        check: |_source, checker| {
+            assert_eq!(
+                messages(&checker),
+                vec!["Rust method `rust::std::collections::HashMap::is_empty` has no admitted callable signature"],
+                "{:?}",
+                checker.errors
+            );
+            Ok(())
+        },
+    },
+    // A task bound by a runtime future capability may outlive the call that starts it, so an async call that lends a
+    // borrow is refused with `INCAN-T0123` in the checker, in both spellings; an owned argument is not.
+    SourceRow {
+        name: "a_spawned_task_cannot_hold_a_borrow",
+        source: "from rust::incan_std_primitives::task import RuntimeFuture\n\nmodel Buffer:\n    items: list[int]\n\ndef spawn[T, TaskFuture with RuntimeFuture[T]](task: TaskFuture) -> None:\n    pass\n\nasync def measure(buffer: {borrow:Buffer}) -> int:\n    return len(buffer.items)\n\nasync def measure_owned(buffer: Buffer) -> int:\n    return len(buffer.items)\n\nasync def start(buffer: {borrow:Buffer}) -> None:\n    spawn(measure(buffer))\n\nasync def start_owned(buffer: Buffer) -> None:\n    spawn(measure_owned(buffer))\n",
+        check: |_source, checker| {
+            let codes: Vec<_> = checker.errors.iter().map(|error| error.stable_code()).collect();
+            assert_eq!(codes, vec![Some("INCAN-T0123")], "{:?}", checker.errors);
+            Ok(())
+        },
+    },
+    // One type (RFC 164): an owned `Err` payload takes a clone of a borrowed value, so a borrowed generic argument
+    // whose type parameter has no `Clone` bound is refused in the checker, in both spellings; a borrowed value
+    // with a clone, a bounded type parameter's included, is admitted.
+    SourceRow {
+        name: "a_borrowed_value_without_a_clone_is_not_an_owned_error_payload",
+        source: "def borrowed_error[E](error: {borrow:E}) -> Result[None, E]:\n    return Err(error)\n\ndef borrowed_text(error: {borrow:str}) -> Result[None, str]:\n    return Err(error)\n\ndef bounded_error[E with Clone](error: {borrow:E}) -> Result[None, E]:\n    return Err(error)\n",
+        check: |_source, checker| {
+            assert_eq!(checker.errors.len(), 1, "{:?}", checker.errors);
+            assert!(
+                checker.errors[0].message.starts_with("This use needs its own 'E'"),
+                "{:?}",
+                checker.errors
+            );
+            Ok(())
+        },
+    },
+];
