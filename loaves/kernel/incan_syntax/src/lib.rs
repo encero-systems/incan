@@ -29,4 +29,6 @@ pub mod lexer;
 pub mod parser;
 pub mod scanners;
 pub mod source_security;
+#[cfg(test)]
+mod test_rows;
 pub mod token_helpers;

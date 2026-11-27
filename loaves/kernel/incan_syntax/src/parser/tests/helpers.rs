@@ -79,3 +79,113 @@ pub(super) fn require_function_decl(decl: &Spanned<Declaration>) -> Result<&Func
         )]),
     }
 }
+
+/// A source that parses, with the checks its program must pass.
+pub(super) struct ParseCase {
+    /// The row's name, reported when it fails.
+    pub name: &'static str,
+    pub source: &'static str,
+    pub check: fn(&str, &Program) -> Result<(), Vec<CompileError>>,
+}
+
+/// A source the parser refuses, with the checks its errors must pass.
+pub(super) struct RefusalCase {
+    /// The row's name, reported when it fails.
+    pub name: &'static str,
+    pub source: &'static str,
+    pub check: fn(&str, &[CompileError]),
+}
+
+fn messages(errors: &[CompileError]) -> Vec<&str> {
+    errors.iter().map(|error| error.message.as_str()).collect()
+}
+
+/// Runs `row`, turning a returned error or a panic into a failure message.
+fn run_row(row: impl FnOnce() -> Result<(), String>) -> Option<String> {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(row)) {
+        Ok(outcome) => outcome.err(),
+        Err(payload) => Some(
+            payload
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| payload.downcast_ref::<&str>().map(|text| text.to_string()))
+                .unwrap_or_else(|| "panicked".to_string()),
+        ),
+    }
+}
+
+fn report(kind: &str, failures: Vec<String>) {
+    assert!(
+        failures.is_empty(),
+        "{} {kind} row(s) failed:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+}
+
+/// Parses every row's source and runs its checks; fails once, naming each failing row.
+pub(super) fn run_parse_cases(cases: &[ParseCase]) {
+    let failures = cases
+        .iter()
+        .filter_map(|case| {
+            run_row(|| {
+                let program =
+                    parse_str(case.source).map_err(|errors| format!("parse failed: {:?}", messages(&errors)))?;
+                (case.check)(case.source, &program).map_err(|errors| format!("check failed: {:?}", messages(&errors)))
+            })
+            .map(|problem| format!("{}: {problem}", case.name))
+        })
+        .collect();
+    report("parse", failures);
+}
+
+/// Requires every row's source to be refused and runs its checks; fails once, naming each failing row.
+pub(super) fn run_refusal_cases(cases: &[RefusalCase]) {
+    let failures = cases
+        .iter()
+        .filter_map(|case| {
+            run_row(|| match parse_str(case.source) {
+                Ok(_) => Err("the source parsed".to_string()),
+                Err(errors) => {
+                    (case.check)(case.source, &errors);
+                    Ok(())
+                }
+            })
+            .map(|problem| format!("{}: {problem}", case.name))
+        })
+        .collect();
+    report("refusal", failures);
+}
+
+pub(super) type VocabKeywords = std::collections::HashMap<String, Vec<incan_vocab::KeywordRegistration>>;
+pub(super) type VocabSurfaces = std::collections::HashMap<String, Vec<incan_vocab::DslSurface>>;
+
+/// A source parsed with the vocabulary registrations its row builds, and the checks its parse result must pass.
+pub(super) struct VocabCase {
+    /// The row's name, reported when it fails.
+    pub name: &'static str,
+    pub source: &'static str,
+    /// Builds the imported keyword registrations and, when the row declares surfaces, the DSL surfaces.
+    pub registrations: fn() -> (VocabKeywords, Option<VocabSurfaces>),
+    /// Receives the source and the parse result, accepted or refused.
+    pub check: fn(&str, Result<Program, Vec<CompileError>>) -> Result<(), Box<dyn std::error::Error>>,
+}
+
+/// Lexes each row's source, parses it with the row's registrations and runs its checks; fails once, naming each
+/// failing row.
+pub(super) fn run_vocab_cases(cases: &[VocabCase]) {
+    let failures = cases
+        .iter()
+        .filter_map(|case| {
+            run_row(|| {
+                let tokens = lexer::lex(case.source).map_err(|errs| format!("lex errors: {errs:?}"))?;
+                let (keywords, surfaces) = (case.registrations)();
+                let parsed =
+                    crate::parser::parse_with_context_and_surfaces(&tokens, None, Some(&keywords), surfaces.as_ref());
+                (case.check)(case.source, parsed).map_err(|error| error.to_string())
+            })
+            .map(|problem| format!("{}: {problem}", case.name))
+        })
+        .collect();
+    report("vocabulary", failures);
+}
