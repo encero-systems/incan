@@ -92,164 +92,55 @@ mod embedded_fragment_tests {
         Ok(fragment)
     }
 
-    // ---- Shared hole traversal ----
+    /// One embedded-fragment row: the descriptor that activates the fragment, a source that parses, and the checks its
+    /// program must pass.
+    struct EmbeddedCase {
+        name: &'static str,
+        keyword: &'static str,
+        provider: &'static str,
+        submode: incan_vocab::EmbeddedFragmentSubmode,
+        source: &'static str,
+        check: fn(&str, &Program) -> Result<(), Box<dyn std::error::Error>>,
+    }
 
-    #[test]
-    fn markup_fragment_holes_reach_attrs_and_nested_children() -> Result<(), Box<dyn std::error::Error>> {
-        // A fragment's expression holes are ordinary Incan, so one traversal has to reach every one of them from
-        // anywhere they can appear. The compiler already typechecks them; tooling that walks expressions reaches
-        // them through this same accessor, which is what stops a fragment from being an opaque region where hover
-        // and signature help quietly stop working (#1022).
-        let (keyword_map, surface_map) =
-            embedded_fixture_maps("html", "webkit", incan_vocab::EmbeddedFragmentSubmode::Markup);
-        let source = "import pub::webkit\n\ndef render(title: str, alt: str) -> None:\n  html:\n    <section class={title}>\n      <h1>{alt}</h1>\n      plain text\n    </section>\n";
-        let program = parse_embedded_fixture(source, &keyword_map, &surface_map)
-            .map_err(|errs| format!("parse errors: {errs:?}"))?;
-        let fragment = embedded_fragment_from_program(&program)?;
-
-        let holes = fragment.holes();
-        let names: Vec<&str> = holes
+    /// Parses every row with its fixture maps and runs its checks; fails once, naming each failing row.
+    fn run_embedded_cases(cases: &[EmbeddedCase]) {
+        let failures: Vec<String> = cases
             .iter()
-            .filter_map(|hole| match &hole.node {
-                Expr::Ident(name) => Some(name.as_str()),
-                _ => None,
+            .filter_map(|case| {
+                let run = || -> Result<(), String> {
+                    let (keyword_map, surface_map) = embedded_fixture_maps(case.keyword, case.provider, case.submode);
+                    let program = parse_embedded_fixture(case.source, &keyword_map, &surface_map)
+                        .map_err(|errs| format!("parse errors: {errs:?}"))?;
+                    (case.check)(case.source, &program).map_err(|error| error.to_string())
+                };
+                let problem = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(run)) {
+                    Ok(Ok(())) => return None,
+                    Ok(Err(problem)) => problem,
+                    Err(payload) => payload
+                        .downcast_ref::<String>()
+                        .cloned()
+                        .or_else(|| payload.downcast_ref::<&str>().map(|text| text.to_string()))
+                        .unwrap_or_else(|| "panicked".to_string()),
+                };
+                Some(format!("{}: {problem}", case.name))
             })
             .collect();
-        assert_eq!(
-            names,
-            vec!["title", "alt"],
-            "an attribute hole and a nested child hole should both be reached, in source order: {holes:?}"
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn style_fragment_holes_reach_declaration_values() -> Result<(), Box<dyn std::error::Error>> {
-        // The style submode nests holes under a rule's declarations rather than under elements, so the traversal
-        // has to descend that shape too rather than only the markup one.
-        let (keyword_map, surface_map) =
-            embedded_fixture_maps("css", "styleforge", incan_vocab::EmbeddedFragmentSubmode::Style);
-        let source = "import pub::styleforge\n\ndef theme(accent: str) -> None:\n  css:\n    .card {\n      color: {accent};\n    }\n";
-        let program = parse_embedded_fixture(source, &keyword_map, &surface_map)
-            .map_err(|errs| format!("parse errors: {errs:?}"))?;
-        let fragment = embedded_fragment_from_program(&program)?;
-
-        let holes = fragment.holes();
-        assert_eq!(
-            holes.len(),
-            1,
-            "the declaration value hole should be reached: {holes:?}"
-        );
         assert!(
-            matches!(&holes[0].node, Expr::Ident(name) if name == "accent"),
-            "unexpected hole: {:?}",
-            holes[0].node
+            failures.is_empty(),
+            "{} embedded row(s) failed:
+    {}",
+            failures.len(),
+            failures.join(
+                "
+    "
+            )
         );
-        Ok(())
     }
+
+    // ---- Shared hole traversal ----
 
     // ---- Markup submode ----
-
-    #[test]
-    fn markup_fragment_accepts_element_attrs_text_entity_comment_and_hole() -> Result<(), Box<dyn std::error::Error>> {
-        let (keyword_map, surface_map) =
-            embedded_fixture_maps("html", "webkit", incan_vocab::EmbeddedFragmentSubmode::Markup);
-        let source = "import pub::webkit\n\ndef render(title: str) -> None:\n  html:\n    <section class=\"card\">\n      <h1>{title}</h1>\n      Copyright &amp; co.\n      <!-- trailer -->\n      <img src={title} alt=\"Preview\" />\n    </section>\n";
-        let program = parse_embedded_fixture(source, &keyword_map, &surface_map)
-            .map_err(|errs| format!("parse errors: {errs:?}"))?;
-        let fragment = embedded_fragment_from_program(&program)?;
-        assert_eq!(fragment.submode, incan_vocab::EmbeddedFragmentSubmode::Markup);
-        assert!(matches!(
-            &fragment.key,
-            incan_semantics_core::SurfaceFeatureKey::ScopedDslSurface { dependency_key, descriptor_key }
-                if dependency_key == "webkit" && descriptor_key == "html.fragment"
-        ));
-        // The fragment's raw byte range includes any trailing newline/indentation before the closing `Dedent`
-        // (preserved verbatim, per the formatter's future layout-preserving fallback), so a trailing whitespace-only
-        // `Text` node after the top-level element is expected here rather than an exact node count.
-        let EmbeddedNode::Element(section) = &fragment.nodes[0].node else {
-            return Err(format!(
-                "expected a top-level <section> element, got {:?}",
-                fragment.nodes[0].node
-            )
-            .into());
-        };
-        assert_eq!(section.name, "section");
-        assert_eq!(section.attrs.len(), 1);
-        assert_eq!(section.attrs[0].name, "class");
-        assert!(
-            matches!(&section.attrs[0].value, Some(spanned) if matches!(&spanned.node, EmbeddedNode::Text(t) if t == "card"))
-        );
-
-        let h1 = section
-            .children
-            .iter()
-            .find_map(|child| match &child.node {
-                EmbeddedNode::Element(el) if el.name == "h1" => Some(el),
-                _ => None,
-            })
-            .ok_or("expected a nested <h1> element")?;
-        let EmbeddedNode::Hole(hole_expr) = &h1.children.first().ok_or("expected <h1> to have a hole child")?.node
-        else {
-            return Err("expected <h1>'s child to be an expression hole".into());
-        };
-        assert!(matches!(&hole_expr.node, Expr::Ident(name) if name == "title"));
-
-        let has_entity = section
-            .children
-            .iter()
-            .any(|child| matches!(&child.node, EmbeddedNode::EntityRef(name) if name == "amp"));
-        assert!(
-            has_entity,
-            "expected an `&amp;` entity reference among the section's children"
-        );
-
-        let has_comment = section
-            .children
-            .iter()
-            .any(|child| matches!(&child.node, EmbeddedNode::Comment(text) if text == " trailer "));
-        assert!(has_comment, "expected a preserved `<!-- trailer -->` comment");
-
-        let img = section
-            .children
-            .iter()
-            .find_map(|child| match &child.node {
-                EmbeddedNode::Element(el) if el.name == "img" => Some(el),
-                _ => None,
-            })
-            .ok_or("expected a self-closing <img> element")?;
-        assert!(img.self_closing);
-        assert!(img.children.is_empty());
-        assert_eq!(img.attrs.len(), 2);
-        assert!(matches!(&img.attrs[0].value, Some(spanned) if matches!(&spanned.node, EmbeddedNode::Hole(_))));
-
-        // Source text is preserved verbatim for the formatter's layout-preserving fallback (#1022).
-        assert!(fragment.source_text.contains("<section class=\"card\">"));
-        assert!(fragment.source_text.contains("<!-- trailer -->"));
-        Ok(())
-    }
-
-    #[test]
-    fn markup_fragment_hole_span_matches_exact_subregion() -> Result<(), Box<dyn std::error::Error>> {
-        let (keyword_map, surface_map) =
-            embedded_fixture_maps("html", "webkit", incan_vocab::EmbeddedFragmentSubmode::Markup);
-        let source = "import pub::webkit\n\ndef render(title: str) -> None:\n  html:\n    <h1>{title}</h1>\n";
-        let program = parse_embedded_fixture(source, &keyword_map, &surface_map)
-            .map_err(|errs| format!("parse errors: {errs:?}"))?;
-        let fragment = embedded_fragment_from_program(&program)?;
-        let EmbeddedNode::Element(h1) = &fragment.nodes[0].node else {
-            return Err("expected a top-level <h1> element".into());
-        };
-        let hole = h1.children.first().ok_or("expected a hole child")?;
-        let expected_start = source.find("{title}").ok_or("fixture source must contain `{title}`")?;
-        let expected_end = expected_start + "{title}".len();
-        assert_eq!(
-            hole.span.start, expected_start,
-            "hole span should start exactly at `{{`"
-        );
-        assert_eq!(hole.span.end, expected_end, "hole span should end exactly after `}}`");
-        Ok(())
-    }
 
     #[test]
     fn markup_fragment_rejects_mismatched_closing_tag() -> Result<(), Box<dyn std::error::Error>> {
@@ -372,71 +263,6 @@ mod embedded_fragment_tests {
     // ---- Style submode ----
 
     #[test]
-    fn style_fragment_accepts_selector_list_declarations_custom_property_and_color()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let (keyword_map, surface_map) =
-            embedded_fixture_maps("css", "webkit", incan_vocab::EmbeddedFragmentSubmode::Style);
-        let source = "import pub::webkit\n\ndef render() -> None:\n  css:\n    .card:hover, #title {\n      --accent-color: #1166ff;\n      color: var(--accent-color);\n      padding: 16px;\n    }\n";
-        let program = parse_embedded_fixture(source, &keyword_map, &surface_map)
-            .map_err(|errs| format!("parse errors: {errs:?}"))?;
-        let fragment = embedded_fragment_from_program(&program)?;
-        assert_eq!(fragment.nodes.len(), 1);
-        let EmbeddedNode::StyleRule(rule) = &fragment.nodes[0].node else {
-            return Err("expected a top-level style rule".into());
-        };
-        assert_eq!(rule.selectors.len(), 2);
-        assert!(
-            matches!(&rule.selectors[0].node, EmbeddedNode::Value(EmbeddedValue::Selector(s)) if s == ".card:hover")
-        );
-        assert!(matches!(&rule.selectors[1].node, EmbeddedNode::Value(EmbeddedValue::Selector(s)) if s == "#title"));
-        assert_eq!(rule.declarations.len(), 3);
-        let EmbeddedNode::Declaration(custom_prop) = &rule.declarations[0].node else {
-            return Err("expected the first declaration".into());
-        };
-        assert_eq!(custom_prop.property, "--accent-color");
-        assert!(matches!(&custom_prop.value[0].node, EmbeddedNode::Value(EmbeddedValue::Color(c)) if c == "#1166ff"));
-        let EmbeddedNode::Declaration(color_decl) = &rule.declarations[1].node else {
-            return Err("expected the second declaration".into());
-        };
-        assert!(matches!(
-            &color_decl.value[0].node,
-            EmbeddedNode::Value(EmbeddedValue::CustomPropertyRef(name)) if name == "--accent-color"
-        ));
-        let EmbeddedNode::Declaration(padding_decl) = &rule.declarations[2].node else {
-            return Err("expected the third declaration".into());
-        };
-        assert!(matches!(
-            &padding_decl.value[0].node,
-            EmbeddedNode::Value(EmbeddedValue::Dimension { number, unit }) if number == "16" && unit == "px"
-        ));
-        Ok(())
-    }
-
-    #[test]
-    fn style_fragment_accepts_a_comment_between_declarations() -> Result<(), Box<dyn std::error::Error>> {
-        let (keyword_map, surface_map) =
-            embedded_fixture_maps("css", "webkit", incan_vocab::EmbeddedFragmentSubmode::Style);
-        let source = "import pub::webkit\n\ndef render() -> None:\n  css:\n    .card {\n      /* keep in sync with the theme tokens */\n      color: red;\n    }\n";
-        let program = parse_embedded_fixture(source, &keyword_map, &surface_map)
-            .map_err(|errs| format!("parse errors: {errs:?}"))?;
-        let fragment = embedded_fragment_from_program(&program)?;
-        let EmbeddedNode::StyleRule(rule) = &fragment.nodes[0].node else {
-            return Err("expected a top-level style rule".into());
-        };
-        // Comments are structural siblings within the declaration block, in source order, not filtered out.
-        assert_eq!(rule.declarations.len(), 2);
-        assert!(matches!(
-            &rule.declarations[0].node,
-            EmbeddedNode::Comment(text) if text.contains("keep in sync")
-        ));
-        let EmbeddedNode::Declaration(color_decl) = &rule.declarations[1].node else {
-            return Err("expected the color declaration".into());
-        };
-        assert_eq!(color_decl.property, "color");
-        Ok(())
-    }
-
-    #[test]
     fn style_fragment_rejects_an_unterminated_comment() -> Result<(), Box<dyn std::error::Error>> {
         let (keyword_map, surface_map) =
             embedded_fixture_maps("css", "webkit", incan_vocab::EmbeddedFragmentSubmode::Style);
@@ -496,78 +322,9 @@ mod embedded_fragment_tests {
         Ok(())
     }
 
-    #[test]
-    fn style_fragment_starting_with_a_declaration_keyword_word_is_not_a_false_positive_boundary_desync()
-    -> Result<(), Box<dyn std::error::Error>> {
-        // Regression test for the boundary-desync check itself: a fragment's raw slice starts right after the
-        // block's `Indent` token, so unlike every later line, its *first* line alone carries no leading
-        // indentation in that string -- even when the fragment is correctly bounded. A naive check that also
-        // scanned the first line would false-positive here, since `.def-card` starts with the literal text
-        // `"def "`-adjacent bytes... use a declaration keyword outright to make the risk concrete: a `RawText`
-        // fragment whose entire, correctly-bounded content is the single word `"class"` on its own first line.
-        let (keyword_map, surface_map) =
-            embedded_fixture_maps("note", "webkit", incan_vocab::EmbeddedFragmentSubmode::RawText);
-        let source = "import pub::webkit\n\ndef render() -> None:\n  note:\n    class assignment\n\ndef after_fragment() -> None:\n  let x = 1\n";
-        let program = parse_embedded_fixture(source, &keyword_map, &surface_map)
-            .map_err(|errs| format!("expected no false-positive boundary-desync error, got: {errs:?}"))?;
-        let fragment = embedded_fragment_from_program(&program)?;
-        assert!(matches!(&fragment.nodes[0].node, EmbeddedNode::Text(t) if t.contains("class assignment")));
-        Ok(())
-    }
-
     // ---- RawText submode ----
 
-    #[test]
-    fn raw_text_fragment_preserves_verbatim_text_and_supports_a_hole() -> Result<(), Box<dyn std::error::Error>> {
-        let (keyword_map, surface_map) =
-            embedded_fixture_maps("note", "webkit", incan_vocab::EmbeddedFragmentSubmode::RawText);
-        let source = "import pub::webkit\n\ndef render(who: str) -> None:\n  note:\n    TODO({who}): finish this <<weird>> text\n";
-        let program = parse_embedded_fixture(source, &keyword_map, &surface_map)
-            .map_err(|errs| format!("parse errors: {errs:?}"))?;
-        let fragment = embedded_fragment_from_program(&program)?;
-        assert!(fragment.nodes.len() >= 3);
-        assert!(matches!(&fragment.nodes[0].node, EmbeddedNode::Text(t) if t == "TODO("));
-        assert!(
-            matches!(&fragment.nodes[1].node, EmbeddedNode::Hole(expr) if matches!(&expr.node, Expr::Ident(n) if n == "who"))
-        );
-        assert!(fragment.source_text.contains("<<weird>>"));
-        Ok(())
-    }
-
     // ---- RegexTemplate submode ----
-
-    #[test]
-    fn regex_template_fragment_accepts_a_regex_literal() -> Result<(), Box<dyn std::error::Error>> {
-        let (keyword_map, surface_map) =
-            embedded_fixture_maps("script", "webkit", incan_vocab::EmbeddedFragmentSubmode::RegexTemplate);
-        let source = "import pub::webkit\n\ndef render() -> None:\n  script:\n    /^[a-z]+\\/[0-9]+$/gi\n";
-        let program = parse_embedded_fixture(source, &keyword_map, &surface_map)
-            .map_err(|errs| format!("parse errors: {errs:?}"))?;
-        let fragment = embedded_fragment_from_program(&program)?;
-        assert_eq!(fragment.nodes.len(), 1);
-        assert!(matches!(
-            &fragment.nodes[0].node,
-            EmbeddedNode::Regex { pattern, flags } if pattern == "^[a-z]+\\/[0-9]+$" && flags == "gi"
-        ));
-        Ok(())
-    }
-
-    #[test]
-    fn regex_template_fragment_accepts_a_template_string_with_a_hole() -> Result<(), Box<dyn std::error::Error>> {
-        let (keyword_map, surface_map) =
-            embedded_fixture_maps("script", "webkit", incan_vocab::EmbeddedFragmentSubmode::RegexTemplate);
-        let source = "import pub::webkit\n\ndef render(name: str) -> None:\n  script:\n    `hello ${name}!`\n";
-        let program = parse_embedded_fixture(source, &keyword_map, &surface_map)
-            .map_err(|errs| format!("parse errors: {errs:?}"))?;
-        let fragment = embedded_fragment_from_program(&program)?;
-        assert_eq!(fragment.nodes.len(), 3);
-        assert!(matches!(&fragment.nodes[0].node, EmbeddedNode::Text(t) if t == "hello "));
-        assert!(
-            matches!(&fragment.nodes[1].node, EmbeddedNode::Hole(expr) if matches!(&expr.node, Expr::Ident(n) if n == "name"))
-        );
-        assert!(matches!(&fragment.nodes[2].node, EmbeddedNode::Text(t) if t == "!"));
-        Ok(())
-    }
 
     #[test]
     fn regex_template_fragment_rejects_content_that_is_neither_form() -> Result<(), Box<dyn std::error::Error>> {
@@ -648,25 +405,6 @@ mod embedded_fragment_tests {
     // ---- SelectorDeclarationValue submode ----
 
     #[test]
-    fn selector_declaration_value_fragment_accepts_a_dimension() -> Result<(), Box<dyn std::error::Error>> {
-        let (keyword_map, surface_map) = embedded_fixture_maps(
-            "spacing",
-            "webkit",
-            incan_vocab::EmbeddedFragmentSubmode::SelectorDeclarationValue,
-        );
-        let source = "import pub::webkit\n\ndef render() -> None:\n  spacing:\n    2rem\n";
-        let program = parse_embedded_fixture(source, &keyword_map, &surface_map)
-            .map_err(|errs| format!("parse errors: {errs:?}"))?;
-        let fragment = embedded_fragment_from_program(&program)?;
-        assert_eq!(fragment.nodes.len(), 1);
-        assert!(matches!(
-            &fragment.nodes[0].node,
-            EmbeddedNode::Value(EmbeddedValue::Dimension { number, unit }) if number == "2" && unit == "rem"
-        ));
-        Ok(())
-    }
-
-    #[test]
     fn selector_declaration_value_fragment_rejects_trailing_content() -> Result<(), Box<dyn std::error::Error>> {
         let (keyword_map, surface_map) = embedded_fixture_maps(
             "spacing",
@@ -685,35 +423,6 @@ mod embedded_fragment_tests {
     }
 
     // ---- TypePosition submode ----
-
-    #[test]
-    fn type_position_fragment_accepts_generic_nullable_array_and_union() -> Result<(), Box<dyn std::error::Error>> {
-        let (keyword_map, surface_map) =
-            embedded_fixture_maps("typeof", "webkit", incan_vocab::EmbeddedFragmentSubmode::TypePosition);
-        let source = "import pub::webkit\n\ndef render() -> None:\n  typeof:\n    a.b.Foo<Bar[]>? | Baz\n";
-        let program = parse_embedded_fixture(source, &keyword_map, &surface_map)
-            .map_err(|errs| format!("parse errors: {errs:?}"))?;
-        let fragment = embedded_fragment_from_program(&program)?;
-        assert_eq!(fragment.nodes.len(), 1);
-        let EmbeddedNode::TypeShape(EmbeddedTypeShape::Union(members)) = &fragment.nodes[0].node else {
-            return Err("expected a top-level union type shape".into());
-        };
-        assert_eq!(members.len(), 2);
-        let EmbeddedTypeShape::Nullable(inner) = &members[0] else {
-            return Err("expected the first union member to be nullable".into());
-        };
-        let EmbeddedTypeShape::Generic(base, args) = inner.as_ref() else {
-            return Err("expected the nullable member to wrap a generic type".into());
-        };
-        assert!(
-            matches!(base.as_ref(), EmbeddedTypeShape::Name(segments) if segments == &["a".to_string(), "b".to_string(), "Foo".to_string()])
-        );
-        assert!(
-            matches!(&args[0], EmbeddedTypeShape::Array(elem) if matches!(elem.as_ref(), EmbeddedTypeShape::Name(segments) if segments == &["Bar".to_string()]))
-        );
-        assert!(matches!(&members[1], EmbeddedTypeShape::Name(segments) if segments == &["Baz".to_string()]));
-        Ok(())
-    }
 
     #[test]
     fn type_position_fragment_rejects_an_unclosed_generic() -> Result<(), Box<dyn std::error::Error>> {
@@ -948,4 +657,338 @@ mod embedded_fragment_tests {
             .map_err(|errs| format!("vocab_scriptkit consumer example failed to parse: {errs:?}"))?;
         Ok(())
     }
+
+    #[test]
+    fn embedded_fragment_parse_cases() {
+        run_embedded_cases(EMBEDDED_PARSE_CASES);
+    }
+
+    const EMBEDDED_PARSE_CASES: &[EmbeddedCase] = &[
+        EmbeddedCase {
+            name: "markup_fragment_holes_reach_attrs_and_nested_children",
+            keyword: "html",
+            provider: "webkit",
+            submode: incan_vocab::EmbeddedFragmentSubmode::Markup,
+            source: "import pub::webkit\n\ndef render(title: str, alt: str) -> None:\n  html:\n    <section class={title}>\n      <h1>{alt}</h1>\n      plain text\n    </section>\n",
+            check: |source, program| {
+                let fragment = embedded_fragment_from_program(&program)?;
+
+                let holes = fragment.holes();
+                let names: Vec<&str> = holes
+                    .iter()
+                    .filter_map(|hole| match &hole.node {
+                        Expr::Ident(name) => Some(name.as_str()),
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(
+                    names,
+                    vec!["title", "alt"],
+                    "an attribute hole and a nested child hole should both be reached, in source order: {holes:?}"
+                );
+                Ok(())
+            },
+        },
+        EmbeddedCase {
+            name: "style_fragment_holes_reach_declaration_values",
+            keyword: "css",
+            provider: "styleforge",
+            submode: incan_vocab::EmbeddedFragmentSubmode::Style,
+            source: "import pub::styleforge\n\ndef theme(accent: str) -> None:\n  css:\n    .card {\n      color: {accent};\n    }\n",
+            check: |_source, program| {
+                let fragment = embedded_fragment_from_program(&program)?;
+
+                let holes = fragment.holes();
+                assert_eq!(
+                    holes.len(),
+                    1,
+                    "the declaration value hole should be reached: {holes:?}"
+                );
+                assert!(
+                    matches!(&holes[0].node, Expr::Ident(name) if name == "accent"),
+                    "unexpected hole: {:?}",
+                    holes[0].node
+                );
+                Ok(())
+            },
+        },
+        EmbeddedCase {
+            name: "markup_fragment_accepts_element_attrs_text_entity_comment_and_hole",
+            keyword: "html",
+            provider: "webkit",
+            submode: incan_vocab::EmbeddedFragmentSubmode::Markup,
+            source: "import pub::webkit\n\ndef render(title: str) -> None:\n  html:\n    <section class=\"card\">\n      <h1>{title}</h1>\n      Copyright &amp; co.\n      <!-- trailer -->\n      <img src={title} alt=\"Preview\" />\n    </section>\n",
+            check: |_source, program| {
+                let fragment = embedded_fragment_from_program(&program)?;
+                assert_eq!(fragment.submode, incan_vocab::EmbeddedFragmentSubmode::Markup);
+                assert!(matches!(
+                    &fragment.key,
+                    incan_semantics_core::SurfaceFeatureKey::ScopedDslSurface { dependency_key, descriptor_key }
+                        if dependency_key == "webkit" && descriptor_key == "html.fragment"
+                ));
+                // The fragment's raw byte range includes any trailing newline/indentation before the closing `Dedent`
+                // (preserved verbatim, per the formatter's future layout-preserving fallback), so a trailing
+                // whitespace-only `Text` node after the top-level element is expected here rather than
+                // an exact node count.
+                let EmbeddedNode::Element(section) = &fragment.nodes[0].node else {
+                    return Err(format!(
+                        "expected a top-level <section> element, got {:?}",
+                        fragment.nodes[0].node
+                    )
+                    .into());
+                };
+                assert_eq!(section.name, "section");
+                assert_eq!(section.attrs.len(), 1);
+                assert_eq!(section.attrs[0].name, "class");
+                assert!(
+                    matches!(&section.attrs[0].value, Some(spanned) if matches!(&spanned.node, EmbeddedNode::Text(t) if t == "card"))
+                );
+
+                let h1 = section
+                    .children
+                    .iter()
+                    .find_map(|child| match &child.node {
+                        EmbeddedNode::Element(el) if el.name == "h1" => Some(el),
+                        _ => None,
+                    })
+                    .ok_or("expected a nested <h1> element")?;
+                let EmbeddedNode::Hole(hole_expr) =
+                    &h1.children.first().ok_or("expected <h1> to have a hole child")?.node
+                else {
+                    return Err("expected <h1>'s child to be an expression hole".into());
+                };
+                assert!(matches!(&hole_expr.node, Expr::Ident(name) if name == "title"));
+
+                let has_entity = section
+                    .children
+                    .iter()
+                    .any(|child| matches!(&child.node, EmbeddedNode::EntityRef(name) if name == "amp"));
+                assert!(
+                    has_entity,
+                    "expected an `&amp;` entity reference among the section's children"
+                );
+
+                let has_comment = section
+                    .children
+                    .iter()
+                    .any(|child| matches!(&child.node, EmbeddedNode::Comment(text) if text == " trailer "));
+                assert!(has_comment, "expected a preserved `<!-- trailer -->` comment");
+
+                let img = section
+                    .children
+                    .iter()
+                    .find_map(|child| match &child.node {
+                        EmbeddedNode::Element(el) if el.name == "img" => Some(el),
+                        _ => None,
+                    })
+                    .ok_or("expected a self-closing <img> element")?;
+                assert!(img.self_closing);
+                assert!(img.children.is_empty());
+                assert_eq!(img.attrs.len(), 2);
+                assert!(matches!(&img.attrs[0].value, Some(spanned) if matches!(&spanned.node, EmbeddedNode::Hole(_))));
+
+                // Source text is preserved verbatim for the formatter's layout-preserving fallback (#1022).
+                assert!(fragment.source_text.contains("<section class=\"card\">"));
+                assert!(fragment.source_text.contains("<!-- trailer -->"));
+                Ok(())
+            },
+        },
+        EmbeddedCase {
+            name: "markup_fragment_hole_span_matches_exact_subregion",
+            keyword: "html",
+            provider: "webkit",
+            submode: incan_vocab::EmbeddedFragmentSubmode::Markup,
+            source: "import pub::webkit\n\ndef render(title: str) -> None:\n  html:\n    <h1>{title}</h1>\n",
+            check: |source, program| {
+                let fragment = embedded_fragment_from_program(&program)?;
+                let EmbeddedNode::Element(h1) = &fragment.nodes[0].node else {
+                    return Err("expected a top-level <h1> element".into());
+                };
+                let hole = h1.children.first().ok_or("expected a hole child")?;
+                let expected_start = source.find("{title}").ok_or("fixture source must contain `{title}`")?;
+                let expected_end = expected_start + "{title}".len();
+                assert_eq!(
+                    hole.span.start, expected_start,
+                    "hole span should start exactly at `{{`"
+                );
+                assert_eq!(hole.span.end, expected_end, "hole span should end exactly after `}}`");
+                Ok(())
+            },
+        },
+        EmbeddedCase {
+            name: "style_fragment_accepts_selector_list_declarations_custom_property_and_color",
+            keyword: "css",
+            provider: "webkit",
+            submode: incan_vocab::EmbeddedFragmentSubmode::Style,
+            source: "import pub::webkit\n\ndef render() -> None:\n  css:\n    .card:hover, #title {\n      --accent-color: #1166ff;\n      color: var(--accent-color);\n      padding: 16px;\n    }\n",
+            check: |_source, program| {
+                let fragment = embedded_fragment_from_program(&program)?;
+                assert_eq!(fragment.nodes.len(), 1);
+                let EmbeddedNode::StyleRule(rule) = &fragment.nodes[0].node else {
+                    return Err("expected a top-level style rule".into());
+                };
+                assert_eq!(rule.selectors.len(), 2);
+                assert!(
+                    matches!(&rule.selectors[0].node, EmbeddedNode::Value(EmbeddedValue::Selector(s)) if s == ".card:hover")
+                );
+                assert!(
+                    matches!(&rule.selectors[1].node, EmbeddedNode::Value(EmbeddedValue::Selector(s)) if s == "#title")
+                );
+                assert_eq!(rule.declarations.len(), 3);
+                let EmbeddedNode::Declaration(custom_prop) = &rule.declarations[0].node else {
+                    return Err("expected the first declaration".into());
+                };
+                assert_eq!(custom_prop.property, "--accent-color");
+                assert!(
+                    matches!(&custom_prop.value[0].node, EmbeddedNode::Value(EmbeddedValue::Color(c)) if c == "#1166ff")
+                );
+                let EmbeddedNode::Declaration(color_decl) = &rule.declarations[1].node else {
+                    return Err("expected the second declaration".into());
+                };
+                assert!(matches!(
+                    &color_decl.value[0].node,
+                    EmbeddedNode::Value(EmbeddedValue::CustomPropertyRef(name)) if name == "--accent-color"
+                ));
+                let EmbeddedNode::Declaration(padding_decl) = &rule.declarations[2].node else {
+                    return Err("expected the third declaration".into());
+                };
+                assert!(matches!(
+                    &padding_decl.value[0].node,
+                    EmbeddedNode::Value(EmbeddedValue::Dimension { number, unit }) if number == "16" && unit == "px"
+                ));
+                Ok(())
+            },
+        },
+        EmbeddedCase {
+            name: "style_fragment_accepts_a_comment_between_declarations",
+            keyword: "css",
+            provider: "webkit",
+            submode: incan_vocab::EmbeddedFragmentSubmode::Style,
+            source: "import pub::webkit\n\ndef render() -> None:\n  css:\n    .card {\n      /* keep in sync with the theme tokens */\n      color: red;\n    }\n",
+            check: |source, program| {
+                let fragment = embedded_fragment_from_program(&program)?;
+                let EmbeddedNode::StyleRule(rule) = &fragment.nodes[0].node else {
+                    return Err("expected a top-level style rule".into());
+                };
+                // Comments are structural siblings within the declaration block, in source order, not filtered out.
+                assert_eq!(rule.declarations.len(), 2);
+                assert!(matches!(
+                    &rule.declarations[0].node,
+                    EmbeddedNode::Comment(text) if text.contains("keep in sync")
+                ));
+                let EmbeddedNode::Declaration(color_decl) = &rule.declarations[1].node else {
+                    return Err("expected the color declaration".into());
+                };
+                assert_eq!(color_decl.property, "color");
+                Ok(())
+            },
+        },
+        EmbeddedCase {
+            name: "style_fragment_starting_with_a_declaration_keyword_word_is_not_a_false_positive_boundary_desync",
+            keyword: "note",
+            provider: "webkit",
+            submode: incan_vocab::EmbeddedFragmentSubmode::RawText,
+            source: "import pub::webkit\n\ndef render() -> None:\n  note:\n    class assignment\n\ndef after_fragment() -> None:\n  let x = 1\n",
+            check: |_source, program| {
+                let fragment = embedded_fragment_from_program(&program)?;
+                assert!(matches!(&fragment.nodes[0].node, EmbeddedNode::Text(t) if t.contains("class assignment")));
+                Ok(())
+            },
+        },
+        EmbeddedCase {
+            name: "raw_text_fragment_preserves_verbatim_text_and_supports_a_hole",
+            keyword: "note",
+            provider: "webkit",
+            submode: incan_vocab::EmbeddedFragmentSubmode::RawText,
+            source: "import pub::webkit\n\ndef render(who: str) -> None:\n  note:\n    TODO({who}): finish this <<weird>> text\n",
+            check: |_source, program| {
+                let fragment = embedded_fragment_from_program(&program)?;
+                assert!(fragment.nodes.len() >= 3);
+                assert!(matches!(&fragment.nodes[0].node, EmbeddedNode::Text(t) if t == "TODO("));
+                assert!(
+                    matches!(&fragment.nodes[1].node, EmbeddedNode::Hole(expr) if matches!(&expr.node, Expr::Ident(n) if n == "who"))
+                );
+                assert!(fragment.source_text.contains("<<weird>>"));
+                Ok(())
+            },
+        },
+        EmbeddedCase {
+            name: "regex_template_fragment_accepts_a_regex_literal",
+            keyword: "script",
+            provider: "webkit",
+            submode: incan_vocab::EmbeddedFragmentSubmode::RegexTemplate,
+            source: "import pub::webkit\n\ndef render() -> None:\n  script:\n    /^[a-z]+\\/[0-9]+$/gi\n",
+            check: |_source, program| {
+                let fragment = embedded_fragment_from_program(&program)?;
+                assert_eq!(fragment.nodes.len(), 1);
+                assert!(matches!(
+                    &fragment.nodes[0].node,
+                    EmbeddedNode::Regex { pattern, flags } if pattern == "^[a-z]+\\/[0-9]+$" && flags == "gi"
+                ));
+                Ok(())
+            },
+        },
+        EmbeddedCase {
+            name: "regex_template_fragment_accepts_a_template_string_with_a_hole",
+            keyword: "script",
+            provider: "webkit",
+            submode: incan_vocab::EmbeddedFragmentSubmode::RegexTemplate,
+            source: "import pub::webkit\n\ndef render(name: str) -> None:\n  script:\n    `hello ${name}!`\n",
+            check: |_source, program| {
+                let fragment = embedded_fragment_from_program(&program)?;
+                assert_eq!(fragment.nodes.len(), 3);
+                assert!(matches!(&fragment.nodes[0].node, EmbeddedNode::Text(t) if t == "hello "));
+                assert!(
+                    matches!(&fragment.nodes[1].node, EmbeddedNode::Hole(expr) if matches!(&expr.node, Expr::Ident(n) if n == "name"))
+                );
+                assert!(matches!(&fragment.nodes[2].node, EmbeddedNode::Text(t) if t == "!"));
+                Ok(())
+            },
+        },
+        EmbeddedCase {
+            name: "selector_declaration_value_fragment_accepts_a_dimension",
+            keyword: "spacing",
+            provider: "webkit",
+            submode: incan_vocab::EmbeddedFragmentSubmode::SelectorDeclarationValue,
+            source: "import pub::webkit\n\ndef render() -> None:\n  spacing:\n    2rem\n",
+            check: |_source, program| {
+                let fragment = embedded_fragment_from_program(&program)?;
+                assert_eq!(fragment.nodes.len(), 1);
+                assert!(matches!(
+                    &fragment.nodes[0].node,
+                    EmbeddedNode::Value(EmbeddedValue::Dimension { number, unit }) if number == "2" && unit == "rem"
+                ));
+                Ok(())
+            },
+        },
+        EmbeddedCase {
+            name: "type_position_fragment_accepts_generic_nullable_array_and_union",
+            keyword: "typeof",
+            provider: "webkit",
+            submode: incan_vocab::EmbeddedFragmentSubmode::TypePosition,
+            source: "import pub::webkit\n\ndef render() -> None:\n  typeof:\n    a.b.Foo<Bar[]>? | Baz\n",
+            check: |_source, program| {
+                let fragment = embedded_fragment_from_program(&program)?;
+                assert_eq!(fragment.nodes.len(), 1);
+                let EmbeddedNode::TypeShape(EmbeddedTypeShape::Union(members)) = &fragment.nodes[0].node else {
+                    return Err("expected a top-level union type shape".into());
+                };
+                assert_eq!(members.len(), 2);
+                let EmbeddedTypeShape::Nullable(inner) = &members[0] else {
+                    return Err("expected the first union member to be nullable".into());
+                };
+                let EmbeddedTypeShape::Generic(base, args) = inner.as_ref() else {
+                    return Err("expected the nullable member to wrap a generic type".into());
+                };
+                assert!(
+                    matches!(base.as_ref(), EmbeddedTypeShape::Name(segments) if segments == &["a".to_string(), "b".to_string(), "Foo".to_string()])
+                );
+                assert!(
+                    matches!(&args[0], EmbeddedTypeShape::Array(elem) if matches!(elem.as_ref(), EmbeddedTypeShape::Name(segments) if segments == &["Bar".to_string()]))
+                );
+                assert!(matches!(&members[1], EmbeddedTypeShape::Name(segments) if segments == &["Baz".to_string()]));
+                Ok(())
+            },
+        },
+    ];
 }
