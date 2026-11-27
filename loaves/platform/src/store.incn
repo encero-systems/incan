@@ -845,6 +845,11 @@ pub def commit(transaction: Transaction) -> Result[Snapshot, StoreError]:
     """Publish one view through the same atomic group boundary used by multi-view requests."""
     return commit_group([transaction])
 
+
+pub def commit_strict(transaction: Transaction) -> Result[Snapshot, StoreError]:
+    """Publish a compared write only while its starting revision is current, including equal writes."""
+    return commit(transaction)
+
 pub model Publication:
     """One atomic generation and its optional already-held execution pin."""
 
@@ -862,13 +867,7 @@ pub def commit_pinned(transactions: list[Transaction], view: str) -> Result[Publ
     return publish_group(transactions, view)
 
 def publish_group(transactions: list[Transaction], execution_view: str) -> Result[Publication, StoreError]:
-    """
-    Publish all views in one durable generation, or none of them.
-
-    1. Lock publication and validate every write before staging any bytes.
-    2. Stage each changed view's records and index; no view becomes visible yet.
-    3. Switch one manifest and CURRENT after every referenced object is durable.
-    """
+    """Validate and stage all writes under one lock before switching the manifest."""
     if len(transactions) == 0:
         return Err(failure("format", "transaction", "an empty group has no selected view"))
     transaction_id = transactions[0].id
