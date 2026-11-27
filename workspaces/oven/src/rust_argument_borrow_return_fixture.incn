@@ -163,7 +163,7 @@ model Activation:
     invocations: list[JsonValue]
 
 
-def client_request(trace: Path, pid: int, app: Path) -> Result[JsonValue, str]:
+def client_request(trace: Path, pid: int, app: Path, command: str) -> Result[JsonValue, str]:
     """Select the exact frontend request emitted by the successfully waited child."""
     rows = trace_rows(trace.joinpath(f"engine-oven-{pid}.jsonl"))?
     starts = [row for row in rows if json_text_is(row, "operation", "cli_start")]
@@ -176,7 +176,7 @@ def client_request(trace: Path, pid: int, app: Path) -> Result[JsonValue, str]:
         not oven_origin(start, pid)?
         or not oven_origin(request, pid)?
         or not done_span(request, "oven")
-        or not json_text_is(start, "key", "run")
+        or not json_text_is(start, "key", command)
     ):
         return Err("client trace origin does not match the waited command")
     source = Path(required_text(request, "key")?).resolve().map_err((error) => error.message())?
@@ -417,7 +417,8 @@ def require_returned_app_checks(
         if len(leases) != 1:
             return Err("10.3 borrow return: issued checking did not complete before selection")
         activation = issued_activation(rpc, window, workers)?
-        checked = app_statement_owners(activation.invocations, source, check_only)?
+        callers: Dict[str, str] = {"main": "main", "read_second": "second_reader", "unchanged_marker": "control"}
+        checked = app_statement_owners(activation.invocations, source, callers, check_only)?
         for name in checked.keys():
             if name in owners:
                 return Err(f"10.3 borrow return: app caller {name} checked twice")
@@ -467,11 +468,11 @@ def run_fanout_probe(
         or not json_text_is(report, "granularity", "unit-record")
     ):
         return Err(f"10.3 {stage}: wrong ordinary proof envelope")
-    return Ok((report, client_request(trace, pid, app)?))
+    return Ok((report, client_request(trace, pid, app, "run")?))
 
 
 def app_statement_owners(
-    rows: list[JsonValue], source: Path, check_only: bool = false,
+    rows: list[JsonValue], source: Path, allowed: Dict[str, str], check_only: bool = false, namespace: str = "",
 ) -> Result[Dict[str, str], str]:
     """Collect each completed application owner statement once."""
     mut begins: Dict[str, JsonValue] = {}
@@ -509,7 +510,7 @@ def app_statement_owners(
             name = required_text(event, "owner")?
             if name in owners:
                 return Err(f"fanout repeated checked owner {name}")
-            identity, statement = app_statement(row, begins, ended, root)?
+            identity, statement = app_statement(row, begins, ended, root, allowed, namespace)?
             owners[name] = identity
             counted.add(statement)
     for identifier in begins.keys():
@@ -528,6 +529,8 @@ def app_statement(
     begins: Dict[str, JsonValue],
     ended: Dict[str, JsonValue],
     root: str,
+    allowed: Dict[str, str],
+    namespace: str,
 ) -> Result[tuple[str, str], str]:
     """Bind fresh work to a named source owner and its one closed statement span."""
     parent = required_text(row, "parent")?
@@ -537,7 +540,6 @@ def app_statement(
     event = fields(row)?
     name = required_text(event, "owner")?
     module = required_text(event, "module")?
-    allowed: Dict[str, str] = {"main": "main", "read_second": "second_reader", "unchanged_marker": "control"}
     if (
         name not in allowed
         or allowed[name] != module
@@ -546,8 +548,8 @@ def app_statement(
     ):
         return Err(f"fanout checked a foreign owner {module}::{name}")
     identity = required_text(fields(begin)?, "identity")?
-    if not identity.startswith(f"function:{module}::{name}|incan.source-signature/2:sha256:"):
-        return Err(f"fanout stable owner does not identify {module}::{name}")
+    if not identity.startswith(f"function:{namespace}{module}::{name}|incan.source-signature/2:sha256:"):
+        return Err(f"fanout stable owner does not identify {namespace}{module}::{name}")
     statements = [start for start in begins.values() if json_text_is(start, "parent", parent) and json_text_is(
         start,
         "function",
@@ -558,3 +560,158 @@ def app_statement(
     expect_closed(begin, ended)?
     expect_closed(statements[0], ended)?
     return Ok((identity, required_text(statements[0], "id")?))
+
+
+pub def verify_rust_source_edit_rebuild(binary: str, root: Path) -> Result[None, str]:
+    """Build a three-layer local dependency and require exact work after editing only its Rust source."""
+    provider = root.joinpath("provider")
+    app = root.joinpath("app")
+    provider.joinpath("src").mkdir(true, true).map_err((error) => error.message())?
+    provider.joinpath("rust/src").mkdir(true, true).map_err((error) => error.message())?
+    app.joinpath("src").mkdir(true, true).map_err((error) => error.message())?
+    write(
+        provider.joinpath("loaf.toml"),
+        "[project]\nname = \"rust_edit_provider\"\nversion = \"0.1.0\"\n\n[rust]\nname = \"rust_edit_native\"\ntype = \"lib\"\nedition = \"2024\"\n\n[rust.source]\nroot = \"rust\"\n",
+    )?
+    write(
+        provider.joinpath("src/lib.incn"),
+        "from rust::rust_edit_native import native_value\n\n\npub def value() -> int:\n    return native_value()\n",
+    )?
+    native = provider.joinpath("rust/src/lib.rs")
+    write(native, "pub fn native_value() -> i64 {\n    42\n}\n")?
+    write(
+        app.joinpath("loaf.toml"),
+        "[project]\nname = \"rust_edit_app\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n\n[dependencies]\nrust_edit_provider = { path = \"../provider\" }\n",
+    )?
+    write(
+        app.joinpath("src/main.incn"),
+        "from pub::rust_edit_provider import value\n\n\ndef main() -> None:\n    println(value())\n",
+    )?
+    store = root.joinpath("store")
+    trace = attempt_trace(root, "rust-source-edit")?
+    physical = app.resolve().map_err((error) => error.message())?
+    _seed, _seed_pid = rust_source_probe_build(binary, physical, store, trace)?
+    executable = app.joinpath("target/incan/debug/bin/rust_edit_app")
+    require_probe_output(executable, "42")?
+    write(native, "pub fn native_value() -> i64 {\n    43\n}\n")?
+    edited, pid = rust_source_probe_build(binary, physical, store, trace)?
+    edited_diagnostic = edited.to_json().map_err((error) => error.message())?
+    require_probe_output(executable, "43")?
+    assert proof_count(edited, "source_reads")? == 1, edited_diagnostic
+    assert proof_count(edited, "source_listings")? == 0, edited_diagnostic
+    require_retained_dependency_reader(edited, trace, pid, "build", physical, provider, {"value": "main"})?
+    assert proof_count(edited, "unit_evaluations")? == 1, edited_diagnostic
+    assert proof_count(edited, "native_bakes")? == 1, edited_diagnostic
+    unchanged, _unchanged_pid = rust_source_probe_build(binary, physical, store, trace)?
+    unchanged_diagnostic = unchanged.to_json().map_err((error) => error.message())?
+    assert proof_count(unchanged, "source_reads")? == 0, unchanged_diagnostic
+    assert proof_count(unchanged, "source_listings")? == 0, unchanged_diagnostic
+    assert proof_count(unchanged, "body_evaluations")? == 0, unchanged_diagnostic
+    assert proof_count(unchanged, "unit_evaluations")? == 0, unchanged_diagnostic
+    assert proof_count(unchanged, "native_bakes")? == 0, unchanged_diagnostic
+    return stop_example_engine(binary, store)
+
+
+pub def require_probe_output(executable: Path, expected: str) -> Result[None, str]:
+    """Run the linked probe and require its exact source-selected value."""
+    outcome = Command.new(executable.0).output().map_err((error) => str(error))?
+    output = from_utf8(outcome.stdout).map_err((error) => str(error))?
+    errors = from_utf8(outcome.stderr).map_err((error) => str(error))?
+    if not outcome.status.success() or output != expected + "\n" or errors != "":
+        return Err(f"Rust source probe: status={outcome.status.code()} stdout={output} stderr={errors}")
+    return Ok(None)
+
+
+def rust_source_probe_build(binary: str, app: Path, store: Path, trace: Path) -> Result[tuple[JsonValue, int], str]:
+    """Collect the debug probe's proof report and the process that wrote it."""
+    child = Command
+        .new(binary)
+        .arg("build")
+        .arg(app.0)
+        .args(["--profile", "debug", "--engine-report"])
+        .env("INCAN_ENGINE", "records")
+        .env("INCAN_BAKERY", store.0)
+        .env("INCAN_ENGINE_TRACE", trace.0)
+        .stdin(Stdio.null()).stdout(Stdio.piped()).stderr(Stdio.piped())
+        .spawn()
+        .map_err((error) => str(error))?
+    pid = int(child.id())
+    outcome = child.wait_with_output().map_err((error) => str(error))?
+    output = from_utf8(outcome.stdout).map_err((error) => str(error))?
+    errors = from_utf8(outcome.stderr).map_err((error) => str(error))?
+    if not outcome.status.success() or errors != "":
+        return Err(f"Rust source probe: status={outcome.status.code()} stdout={output} stderr={errors}")
+    return Ok((command_proof(outcome.stdout)?, pid))
+
+
+pub def require_retained_dependency_reader(
+    report: JsonValue, trace: Path, pid: int, command: str, app: Path, provider: Path, provider_owners: Dict[str, str],
+) -> Result[None, str]:
+    """Check the public total against issued owner work and independently require app body reuse."""
+    request = client_request(trace, pid, app, command)?
+    window = settlement_window(trace, request)?
+    workers = compiler_activations(trace, request)?
+    provider_root = provider.resolve().map_err((error) => error.message())?
+    provider_source = provider_root.joinpath("src/lib.incn")
+    provider_activation = match dependency_compile(window, workers, provider_root, provider_source, "library")?:
+        Some(unit) => unit
+        None => return Err("dependency edit did not issue its provider unit")
+    checked_provider = app_statement_owners(
+        provider_activation.activation.invocations, provider_source, provider_owners,
+        namespace=f"pub::{provider_activation.package}::",
+    )?
+    assert sorted(checked_provider.keys()) == sorted(provider_owners.keys()), f"unexpected provider work: {checked_provider}"
+    app_source = app.joinpath("src/main.incn")
+    activation = dependency_compile(window, workers, app, app_source, "program")?
+    if let Some(selected) = activation:
+        app_owners = app_statement_owners(selected.activation.invocations, app_source, {"main": "main"})?
+        assert len(app_owners) == 0, f"dependency edit checked application owners again: {app_owners}"
+        assert reused_application_namespace(selected.activation.invocations)?, "dependency edit did not reuse its application namespace"
+        diagnostic = report.to_json().map_err((error) => error.message())?
+        assert proof_count(report, "body_evaluations")? == len(checked_provider) + len(app_owners), diagnostic
+        return Ok(None)
+    return Err("dependency edit did not issue its application unit")
+
+
+model DependencyCompile:
+    """One completed worker activation and its descriptor's package identity."""
+
+    activation: Activation
+    package: str
+
+
+def dependency_compile(
+    window: list[JsonValue], workers: list[Activation], project: Path, source: Path, kind: str,
+) -> Result[Option[DependencyCompile], str]:
+    """Bind the unit descriptor and completed activation selected before the execution lease."""
+    prefix = "--unit " + project.joinpath("target/incan/units").0 + "/"
+    mut matched: Option[DependencyCompile] = None
+    for rpc in window:
+        if not json_text_is(rpc, "operation", "driver_request"):
+            continue
+        key = required_text(rpc, "key")?
+        if not key.startswith(prefix):
+            continue
+        if matched is not None:
+            return Err("dependency edit issued more than one compile for a project")
+        descriptor = Path(key[7:])
+        validate_descriptor(descriptor)?
+        unit = read_unit(read_unit_document(descriptor)?)?
+        if unit.kind != kind or unit.project_root != project.0 or unit.source != source.0:
+            return Err("dependency edit issued the wrong physical unit")
+        leases = [row for row in window if json_text_is(row, "operation", "engine_lease") and precedes(rpc, row)?]
+        if len(leases) != 1:
+            return Err("dependency edit compile did not finish before its lease")
+        matched = Some(DependencyCompile(activation=issued_activation(rpc, window, workers)?, package=unit.package))
+    return Ok(matched)
+
+def reused_application_namespace(rows: list[JsonValue]) -> Result[bool, str]:
+    """Find positive resident Body IR reuse in the issued application compile."""
+    for row in rows:
+        if json_text_is(row, "kind", "event"):
+            event = fields(row)?
+            if json_text_is(event, "module", "src/main.incn") and json_text_is(
+                event, "message", "reused resident namespace Body IR",
+            ):
+                return Ok(true)
+    return Ok(false)

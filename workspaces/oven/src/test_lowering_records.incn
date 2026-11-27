@@ -38,7 +38,9 @@ from borrowed_positioned_member_control import (
     verify_gamma_helper_publication, verify_gamma_removal_and_parity, write_gamma_fixture,
 )
 from scratch import scratch_directory
-from rust_argument_borrow_return_fixture import verify_rust_argument_borrow_return
+from rust_argument_borrow_return_fixture import (
+    require_probe_output, verify_rust_argument_borrow_return, verify_rust_source_edit_rebuild,
+)
 from rust_target import decoded
 from store_path_conversion import snapshot as store_snapshot
 from pub::incan_mir_plan import AdmittedFunction, AdmittedModule, encode_module_note
@@ -1065,81 +1067,6 @@ def verify_signature_edit(binary: str, root: Path) -> Result[None, str]:
     assert executable == root.joinpath("target/incan/release/bin/hello").read_bytes().map_err((error) => error.message())?, "warm and cold executables differ"
     return stop_example_engine(binary, cold_store)
 
-
-def verify_rust_source_edit_rebuild(binary: str, root: Path) -> Result[None, str]:
-    """Build a three-layer local dependency and require exact work after editing only its Rust source."""
-    provider = root.joinpath("provider")
-    app = root.joinpath("app")
-    provider.joinpath("src").mkdir(true, true).map_err((error) => error.message())?
-    provider.joinpath("rust/src").mkdir(true, true).map_err((error) => error.message())?
-    app.joinpath("src").mkdir(true, true).map_err((error) => error.message())?
-    write(
-        provider.joinpath("loaf.toml"),
-        "[project]\nname = \"rust_edit_provider\"\nversion = \"0.1.0\"\n\n[rust]\nname = \"rust_edit_native\"\ntype = \"lib\"\nedition = \"2024\"\n\n[rust.source]\nroot = \"rust\"\n",
-    )?
-    write(
-        provider.joinpath("src/lib.incn"),
-        "from rust::rust_edit_native import native_value\n\n\npub def value() -> int:\n    return native_value()\n",
-    )?
-    native = provider.joinpath("rust/src/lib.rs")
-    write(native, "pub fn native_value() -> i64 {\n    42\n}\n")?
-    write(
-        app.joinpath("loaf.toml"),
-        "[project]\nname = \"rust_edit_app\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n\n[dependencies]\nrust_edit_provider = { path = \"../provider\" }\n",
-    )?
-    write(
-        app.joinpath("src/main.incn"),
-        "from pub::rust_edit_provider import value\n\n\ndef main() -> None:\n    println(value())\n",
-    )?
-    store = root.joinpath("store")
-    _ = rust_source_probe_build(binary, app, store)?
-    executable = app.joinpath("target/incan/debug/bin/rust_edit_app")
-    require_probe_output(executable, "42")?
-    write(native, "pub fn native_value() -> i64 {\n    43\n}\n")?
-    edited = rust_source_probe_build(binary, app, store)?
-    edited_diagnostic = edited.to_json().map_err((error) => error.message())?
-    require_probe_output(executable, "43")?
-    assert proof_count(edited, "source_reads")? == 1, edited_diagnostic
-    assert proof_count(edited, "source_listings")? == 0, edited_diagnostic
-    assert proof_count(edited, "body_evaluations")? == 0, edited_diagnostic
-    assert proof_count(edited, "unit_evaluations")? == 1, edited_diagnostic
-    assert proof_count(edited, "native_bakes")? == 1, edited_diagnostic
-    unchanged = rust_source_probe_build(binary, app, store)?
-    unchanged_diagnostic = unchanged.to_json().map_err((error) => error.message())?
-    assert proof_count(unchanged, "source_reads")? == 0, unchanged_diagnostic
-    assert proof_count(unchanged, "source_listings")? == 0, unchanged_diagnostic
-    assert proof_count(unchanged, "body_evaluations")? == 0, unchanged_diagnostic
-    assert proof_count(unchanged, "unit_evaluations")? == 0, unchanged_diagnostic
-    assert proof_count(unchanged, "native_bakes")? == 0, unchanged_diagnostic
-    return stop_example_engine(binary, store)
-
-
-def require_probe_output(executable: Path, expected: str) -> Result[None, str]:
-    """Run the linked probe and require its exact source-selected value."""
-    outcome = Command.new(executable.0).output().map_err((error) => str(error))?
-    output = from_utf8(outcome.stdout).map_err((error) => str(error))?
-    errors = from_utf8(outcome.stderr).map_err((error) => str(error))?
-    if not outcome.status.success() or output != expected + "\n" or errors != "":
-        return Err(f"Rust source probe: status={outcome.status.code()} stdout={output} stderr={errors}")
-    return Ok(None)
-
-
-def rust_source_probe_build(binary: str, app: Path, store: Path) -> Result[JsonValue, str]:
-    """Build one debug probe through records lowering and return its measured proof report."""
-    outcome = Command
-        .new(binary)
-        .arg("build")
-        .arg(app.0)
-        .args(["--profile", "debug", "--engine-report"])
-        .env("INCAN_ENGINE", "records")
-        .env("INCAN_BAKERY", store.0)
-        .output()
-        .map_err((error) => str(error))?
-    output = from_utf8(outcome.stdout).map_err((error) => str(error))?
-    errors = from_utf8(outcome.stderr).map_err((error) => str(error))?
-    if not outcome.status.success() or errors != "":
-        return Err(f"Rust source probe: status={outcome.status.code()} stdout={output} stderr={errors}")
-    return command_proof(outcome.stdout)
 
 
 def verify_rust_closure_debug_reproducibility(binary: str, root: Path) -> Result[None, str]:
