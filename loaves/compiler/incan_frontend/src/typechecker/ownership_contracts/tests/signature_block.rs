@@ -1,6 +1,7 @@
 //! Current-source value-use classification for the bounded compiler signature block.
 
 use super::*;
+use crate::test_rows::{SourceRow, run_source_rows};
 
 /// Require one named body to retain a conflict-free checked graph.
 fn require_checked(checker: &TypeChecker, owner: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -278,78 +279,6 @@ fn signature_block_keeps_ordinary_enum_functions_on_call_result_route() -> Resul
         .map(|(_, value_use)| value_use)
         .ok_or("ordinary enum function lost its CallResult authority")?;
     assert_eq!(value_use.kind, flow::ValueUseKind::CallResult);
-    Ok(())
-}
-
-/// One canonical field may be taken from a fresh dependency-free direct call for an ordinary immutable argument.
-/// The outer value retains source-less CallResult authority while source and replay execute the inner call once.
-#[test]
-fn signature_block_admits_exact_direct_call_field_result_and_replays_it() -> Result<(), Box<dyn std::error::Error>> {
-    let source = "@derive(Clone)\nmodel Metadata:\n    value: str\n@derive(Clone)\nmodel Description:\n    metadata: Metadata\ndef make() -> Description:\n    return Description(metadata=Metadata(value=\"value\"))\ndef observe(value: Metadata) -> int:\n    return len(value.value)\ndef inspect(seed: Owned[int]) -> int:\n    return observe(make().metadata)\n";
-    let checker = checked(source)?;
-    let (make_span, make_call) = checker
-        .type_info
-        .protocols
-        .explicit_input_calls
-        .iter()
-        .find(|(span, call)| {
-            source.get(span.start..span.end) == Some("make()")
-                && call
-                    .owner
-                    .as_ref()
-                    .is_some_and(|owner| owner.declaration_name == "inspect")
-        })
-        .ok_or("projected base lost its selected call facts")?;
-    assert!(matches!(
-        make_call.kind,
-        InputCallKind::Ordinary | InputCallKind::Explicit
-    ));
-    let make_contract = checker.type_info.selected_input_contract(make_call)?;
-    assert!(crate::ownership_metadata::returned_view(make_contract)?.is_none());
-    assert!(crate::ownership_metadata::owned_result(make_contract)?.is_none());
-    assert!(make_contract.is_none_or(|contract| contract.result_source.is_none()));
-    assert!(checker.native_result_dependencies(*make_span)?.is_none());
-    assert!(!checker.native_result_is_independent(*make_span));
-    require_checked(&checker, "inspect")?;
-    let (owner, graph) = checker
-        .type_info
-        .protocols
-        .explicit_input_flow
-        .iter()
-        .find(|(owner, _)| owner.declaration_name == "inspect")
-        .and_then(|(owner, flow)| match flow {
-            InputFlow::Checked { graph, .. } => Some((owner, graph)),
-            _ => None,
-        })
-        .ok_or("missing inspect graph")?;
-    let (span, value_use) = graph
-        .value_uses
-        .iter()
-        .find(|(span, _)| source.get(span.start..span.end) == Some("make().metadata"))
-        .ok_or("fresh field projection lost its outer classification")?;
-    assert_eq!(value_use.kind, flow::ValueUseKind::CallResult);
-    assert!(value_use.accesses.is_empty());
-    assert_eq!(source.get(span.start..span.end), Some("make().metadata"));
-    let invocation = graph
-        .invocations
-        .values()
-        .find(|invocation| invocation.callee.declaration_name == "observe")
-        .ok_or("missing observe invocation")?;
-    let argument = invocation.arguments.first().ok_or("missing observe argument")?;
-    assert_eq!(argument.span, *span);
-    assert_eq!(argument.access, incan_semantics_core::IncanInputAccess::Inferred);
-    assert!(argument.source.is_none());
-    assert!(argument.loan.is_none());
-    assert!(argument.evaluation.source_node.is_none());
-    assert_eq!(
-        graph
-            .invocations
-            .values()
-            .filter(|invocation| invocation.callee.declaration_name == "make")
-            .count(),
-        1
-    );
-    assert!(checker.type_info.checked_input_body(owner)?.is_some());
     Ok(())
 }
 
@@ -775,32 +704,6 @@ fn signature_block_refuses_payload_variant_callback_fresh_ordinary_route() -> Re
     )
 }
 
-/// Nominal fallback never chooses between equal leaves from different canonical origins. Constructor and variant
-/// classifiers share this resolver, so map iteration order cannot grant either route authority.
-#[test]
-fn signature_block_nominal_fallback_refuses_same_leaf_different_origins() -> Result<(), Box<dyn std::error::Error>> {
-    let checker = checked("enum Family:\n    Local\n")?;
-    let identity = checker
-        .checked_nominal_type_identities()
-        .values()
-        .find(|identity| identity.declaration_name == "Family")
-        .cloned()
-        .ok_or("missing Family identity")?;
-    let mut other = identity.clone();
-    other.origin = incan_semantics_core::SymbolOrigin::Module(vec!["other".into()]);
-    let scope = std::collections::BTreeMap::from([
-        ("__first_family".to_string(), identity),
-        ("__second_family".to_string(), other),
-    ]);
-    assert!(super::super::projection::checked_nominal_identity_in(&scope, "Family").is_none());
-    assert!(!super::super::projection::same_checked_value_type_in(
-        &scope,
-        &crate::symbols::ResolvedType::Named("Family".into()),
-        &crate::symbols::ResolvedType::Named("pub::other::Family".into()),
-    ));
-    Ok(())
-}
-
 /// Constructor fields consume exact whole transferable values once. Borrowed and explicitly owned parameters do not
 /// borrow this route, and a second use after the admitted move remains a checked T0126 conflict.
 #[test]
@@ -846,61 +749,6 @@ fn signature_block_classifies_enum_parameter_and_local_list_moves() -> Result<()
     require_checked(&enum_value, "collect")?;
     require_checked(&list_value, "collect")?;
     require_checked(&mutable_final_value, "collect")
-}
-
-/// Compiler-selected builtin Clone calls retain an exact invocation even though their member has no source
-/// declaration. A same-spelled user method remains an ordinary source call and acquires no builtin copy authority.
-#[test]
-fn signature_block_retains_builtin_clone_invocation() -> Result<(), Box<dyn std::error::Error>> {
-    let source = "model Record:\n    text: str\ndef copy(value: Borrowed[str]) -> Owned[Record]:\n    return Record(text=value.clone())\n";
-    let checker = checked(source)?;
-    require_checked(&checker, "copy")?;
-    let (clone_span, operation) = checker
-        .type_info
-        .calls
-        .resolved_builtin_method_calls
-        .iter()
-        .find(|(_, operation)| {
-            **operation
-                == incan_lang::lang::builtins::BuiltinMethodId::Clone(
-                    incan_lang::lang::surface::clone_methods::CloneMethodId::Clone,
-                )
-        })
-        .ok_or("missing selected builtin Clone call")?;
-    assert_eq!(operation.owner(), "Clone");
-    let call = checker
-        .type_info
-        .protocols
-        .explicit_input_calls
-        .get(clone_span)
-        .ok_or("builtin Clone call has no retained input fact")?;
-    assert_eq!(call.kind, InputCallKind::Ordinary);
-    assert_eq!(call.receiver, Some(crate::ast::Receiver::Immutable));
-    assert!(call.parameters.is_empty());
-    let flow = checker
-        .type_info
-        .protocols
-        .explicit_input_flow
-        .iter()
-        .find(|(owner, _)| owner.declaration_name == "copy")
-        .map(|(_, flow)| flow)
-        .ok_or("missing copy flow")?;
-    let InputFlow::Checked { graph, .. } = flow else {
-        return Err(format!("builtin Clone flow is unavailable: {flow:?}").into());
-    };
-    assert!(graph.invocations.contains_key(clone_span));
-
-    let user_source = "model Copier:\n    def clone(self) -> str:\n        return \"user\"\ndef copy(seed: Owned[int]) -> str:\n    copier = Copier()\n    return copier.clone()\n";
-    let user = checked(user_source)?;
-    require_checked(&user, "copy")?;
-    assert!(
-        user.type_info
-            .calls
-            .resolved_builtin_method_calls
-            .values()
-            .all(|operation| !matches!(operation, incan_lang::lang::builtins::BuiltinMethodId::Clone(_)))
-    );
-    Ok(())
 }
 
 /// Matching a closed, nominal error from a direct call retains the evaluation of its argument and both arms.
@@ -1026,3 +874,165 @@ fn signature_block_classifies_full_header_record() -> Result<(), Box<dyn std::er
 }
 
 include!("signature_block/str_encode.rs");
+
+#[test]
+fn signature_block_checked_cases() {
+    run_source_rows(SIGNATURE_BLOCK_CHECKED_CASES, checked);
+}
+
+const SIGNATURE_BLOCK_CHECKED_CASES: &[SourceRow<TypeChecker>] = &[
+    // One canonical field may be taken from a fresh dependency-free direct call for an ordinary immutable argument.
+    // The outer value retains source-less CallResult authority while source and replay execute the inner call once.
+    SourceRow {
+        name: "signature_block_admits_exact_direct_call_field_result_and_replays_it",
+        source: "@derive(Clone)\nmodel Metadata:\n    value: str\n@derive(Clone)\nmodel Description:\n    metadata: Metadata\ndef make() -> Description:\n    return Description(metadata=Metadata(value=\"value\"))\ndef observe(value: Metadata) -> int:\n    return len(value.value)\ndef inspect(seed: Owned[int]) -> int:\n    return observe(make().metadata)\n",
+        check: |source, checker| {
+            let (make_span, make_call) = checker
+                .type_info
+                .protocols
+                .explicit_input_calls
+                .iter()
+                .find(|(span, call)| {
+                    source.get(span.start..span.end) == Some("make()")
+                        && call
+                            .owner
+                            .as_ref()
+                            .is_some_and(|owner| owner.declaration_name == "inspect")
+                })
+                .ok_or("projected base lost its selected call facts")?;
+            assert!(matches!(
+                make_call.kind,
+                InputCallKind::Ordinary | InputCallKind::Explicit
+            ));
+            let make_contract = checker.type_info.selected_input_contract(make_call)?;
+            assert!(crate::ownership_metadata::returned_view(make_contract)?.is_none());
+            assert!(crate::ownership_metadata::owned_result(make_contract)?.is_none());
+            assert!(make_contract.is_none_or(|contract| contract.result_source.is_none()));
+            assert!(checker.native_result_dependencies(*make_span)?.is_none());
+            assert!(!checker.native_result_is_independent(*make_span));
+            require_checked(&checker, "inspect")?;
+            let (owner, graph) = checker
+                .type_info
+                .protocols
+                .explicit_input_flow
+                .iter()
+                .find(|(owner, _)| owner.declaration_name == "inspect")
+                .and_then(|(owner, flow)| match flow {
+                    InputFlow::Checked { graph, .. } => Some((owner, graph)),
+                    _ => None,
+                })
+                .ok_or("missing inspect graph")?;
+            let (span, value_use) = graph
+                .value_uses
+                .iter()
+                .find(|(span, _)| source.get(span.start..span.end) == Some("make().metadata"))
+                .ok_or("fresh field projection lost its outer classification")?;
+            assert_eq!(value_use.kind, flow::ValueUseKind::CallResult);
+            assert!(value_use.accesses.is_empty());
+            assert_eq!(source.get(span.start..span.end), Some("make().metadata"));
+            let invocation = graph
+                .invocations
+                .values()
+                .find(|invocation| invocation.callee.declaration_name == "observe")
+                .ok_or("missing observe invocation")?;
+            let argument = invocation.arguments.first().ok_or("missing observe argument")?;
+            assert_eq!(argument.span, *span);
+            assert_eq!(argument.access, incan_semantics_core::IncanInputAccess::Inferred);
+            assert!(argument.source.is_none());
+            assert!(argument.loan.is_none());
+            assert!(argument.evaluation.source_node.is_none());
+            assert_eq!(
+                graph
+                    .invocations
+                    .values()
+                    .filter(|invocation| invocation.callee.declaration_name == "make")
+                    .count(),
+                1
+            );
+            assert!(checker.type_info.checked_input_body(owner)?.is_some());
+            Ok(())
+        },
+    },
+    // Nominal fallback never chooses between equal leaves from different canonical origins. Constructor and variant
+    // classifiers share this resolver, so map iteration order cannot grant either route authority.
+    SourceRow {
+        name: "signature_block_nominal_fallback_refuses_same_leaf_different_origins",
+        source: "enum Family:\n    Local\n",
+        check: |_source, checker| {
+            let identity = checker
+                .checked_nominal_type_identities()
+                .values()
+                .find(|identity| identity.declaration_name == "Family")
+                .cloned()
+                .ok_or("missing Family identity")?;
+            let mut other = identity.clone();
+            other.origin = incan_semantics_core::SymbolOrigin::Module(vec!["other".into()]);
+            let scope = std::collections::BTreeMap::from([
+                ("__first_family".to_string(), identity),
+                ("__second_family".to_string(), other),
+            ]);
+            assert!(super::super::projection::checked_nominal_identity_in(&scope, "Family").is_none());
+            assert!(!super::super::projection::same_checked_value_type_in(
+                &scope,
+                &crate::symbols::ResolvedType::Named("Family".into()),
+                &crate::symbols::ResolvedType::Named("pub::other::Family".into()),
+            ));
+            Ok(())
+        },
+    },
+    // Compiler-selected builtin Clone calls retain an exact invocation even though their member has no source
+    // declaration. A same-spelled user method remains an ordinary source call and acquires no builtin copy authority.
+    SourceRow {
+        name: "signature_block_retains_builtin_clone_invocation",
+        source: "model Record:\n    text: str\ndef copy(value: Borrowed[str]) -> Owned[Record]:\n    return Record(text=value.clone())\n",
+        check: |_source, checker| {
+            require_checked(&checker, "copy")?;
+            let (clone_span, operation) = checker
+                .type_info
+                .calls
+                .resolved_builtin_method_calls
+                .iter()
+                .find(|(_, operation)| {
+                    **operation
+                        == incan_lang::lang::builtins::BuiltinMethodId::Clone(
+                            incan_lang::lang::surface::clone_methods::CloneMethodId::Clone,
+                        )
+                })
+                .ok_or("missing selected builtin Clone call")?;
+            assert_eq!(operation.owner(), "Clone");
+            let call = checker
+                .type_info
+                .protocols
+                .explicit_input_calls
+                .get(clone_span)
+                .ok_or("builtin Clone call has no retained input fact")?;
+            assert_eq!(call.kind, InputCallKind::Ordinary);
+            assert_eq!(call.receiver, Some(crate::ast::Receiver::Immutable));
+            assert!(call.parameters.is_empty());
+            let flow = checker
+                .type_info
+                .protocols
+                .explicit_input_flow
+                .iter()
+                .find(|(owner, _)| owner.declaration_name == "copy")
+                .map(|(_, flow)| flow)
+                .ok_or("missing copy flow")?;
+            let InputFlow::Checked { graph, .. } = flow else {
+                return Err(format!("builtin Clone flow is unavailable: {flow:?}").into());
+            };
+            assert!(graph.invocations.contains_key(clone_span));
+
+            let user_source = "model Copier:\n    def clone(self) -> str:\n        return \"user\"\ndef copy(seed: Owned[int]) -> str:\n    copier = Copier()\n    return copier.clone()\n";
+            let user = checked(user_source)?;
+            require_checked(&user, "copy")?;
+            assert!(
+                user.type_info
+                    .calls
+                    .resolved_builtin_method_calls
+                    .values()
+                    .all(|operation| !matches!(operation, incan_lang::lang::builtins::BuiltinMethodId::Clone(_)))
+            );
+            Ok(())
+        },
+    },
+];
