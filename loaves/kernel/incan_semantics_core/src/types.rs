@@ -695,23 +695,6 @@ mod tests {
 mod rust_tuple_arity_tests {
     use super::rust_tuple_arity;
 
-    /// Parentheses alone do not make a tuple (#1132).
-    ///
-    /// Reading `(String)` as a one-element tuple would let a one-name destructure lower to `.0` on a `String`,
-    /// recreating the raw-Rust failure through a narrower spelling than the `int` case the issue started from.
-    #[test]
-    fn a_parenthesized_type_is_not_a_one_element_tuple() {
-        assert_eq!(rust_tuple_arity("(String)"), None);
-        assert_eq!(rust_tuple_arity("(std::vec::Vec<u8>)"), None);
-        assert_eq!(rust_tuple_arity("( String )"), None);
-    }
-
-    #[test]
-    fn a_trailing_comma_marks_a_genuine_one_element_tuple() {
-        assert_eq!(rust_tuple_arity("(String,)"), Some(1));
-        assert_eq!(rust_tuple_arity("(String, )"), Some(1));
-    }
-
     #[test]
     fn multi_element_and_nested_generic_spellings_keep_their_arity() {
         assert_eq!(rust_tuple_arity("(A, B)"), Some(2));
@@ -722,11 +705,65 @@ mod rust_tuple_arity_tests {
         assert_eq!(rust_tuple_arity("(HashMap<K, V>, Vec<(A, B)>)"), Some(2));
     }
 
+    /// Rows of (name, the arguments of `rust_tuple_arity`, its expected result).
+    const TUPLE_ARITY_CASES: &[(&str, &str, Option<usize>)] = &[
+        // Parentheses alone do not make a tuple (#1132).
+        //
+        // Reading `(String)` as a one-element tuple would let a one-name destructure lower to `.0` on a `String`,
+        // recreating the raw-Rust failure through a narrower spelling than the `int` case the issue started from.
+        ("a_parenthesized_type_is_not_a_one_element_tuple 1", "(String)", None),
+        (
+            "a_parenthesized_type_is_not_a_one_element_tuple 2",
+            "(std::vec::Vec<u8>)",
+            None,
+        ),
+        ("a_parenthesized_type_is_not_a_one_element_tuple 3", "( String )", None),
+        (
+            "a_trailing_comma_marks_a_genuine_one_element_tuple 1",
+            "(String,)",
+            Some(1),
+        ),
+        (
+            "a_trailing_comma_marks_a_genuine_one_element_tuple 2",
+            "(String, )",
+            Some(1),
+        ),
+        (
+            "unit_is_a_zero_element_tuple_and_opaque_paths_stay_unverifiable 1",
+            "()",
+            Some(0),
+        ),
+        (
+            "unit_is_a_zero_element_tuple_and_opaque_paths_stay_unverifiable 2",
+            "String",
+            None,
+        ),
+        (
+            "unit_is_a_zero_element_tuple_and_opaque_paths_stay_unverifiable 3",
+            "std::collections::HashMap<K, V>",
+            None,
+        ),
+        (
+            "unit_is_a_zero_element_tuple_and_opaque_paths_stay_unverifiable 4",
+            "rust::(A, B)",
+            Some(2),
+        ),
+    ];
+
     #[test]
-    fn unit_is_a_zero_element_tuple_and_opaque_paths_stay_unverifiable() {
-        assert_eq!(rust_tuple_arity("()"), Some(0));
-        assert_eq!(rust_tuple_arity("String"), None);
-        assert_eq!(rust_tuple_arity("std::collections::HashMap<K, V>"), None);
-        assert_eq!(rust_tuple_arity("rust::(A, B)"), Some(2));
+    fn tuple_arity_cases() {
+        let failures: Vec<String> = TUPLE_ARITY_CASES
+            .iter()
+            .filter_map(|(name, a0, expected)| {
+                let result = rust_tuple_arity(*a0);
+                (result != *expected).then(|| format!("{name}: got {result:?}, expected {expected:?}"))
+            })
+            .collect();
+        assert!(
+            failures.is_empty(),
+            "{} row(s) failed:\n{}",
+            failures.len(),
+            failures.join("\n")
+        );
     }
 }
