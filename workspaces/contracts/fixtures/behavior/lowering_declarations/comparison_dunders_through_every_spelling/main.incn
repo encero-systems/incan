@@ -1,4 +1,4 @@
-# behavior: 11 former lowering declarations cases run in order, each program from its own module: comparison_dunders_through_every_spelling, comparison_trait_adopters_compare_and_sort, const_frozen_model_list, const_frozen_model_list_iteration, dunders_of_a_derived_ord, dunders_through_builtin_bounds, frozen_collections_display_structurally, frozen_collections_nested_strings, isinstance_over_string_storages, phantom_type_parameter_model_issue1370, serde_derive_propagation
+# behavior: 14 former lowering declarations cases run in order, each program from its own module: comparison_dunders_through_every_spelling, comparison_trait_adopters_compare_and_sort, const_frozen_model_list, const_frozen_model_list_iteration, dunders_of_a_derived_ord, dunders_through_builtin_bounds, frozen_collections_display_structurally, frozen_collections_nested_strings, isinstance_over_string_storages, phantom_type_parameter_model_issue1370, serde_derive_propagation, trait_default_appending_its_own_item, trait_default_calls_on_self, trait_default_passes_self_by_value
 # expect-stdout:
 #  true
 #  false
@@ -61,6 +61,14 @@
 #  (label * x)
 #  Column(sql="amount", note="n")
 #  {"tags":["A"],"id":7}
+#  3
+#  20
+#  x!
+#  6
+#  hi LABEL
+#  [4, 4]
+#  true
+#  false
 
 """Run the program of each former case in order."""
 
@@ -75,6 +83,9 @@ import frozen_collections_nested_strings
 import isinstance_over_string_storages
 import phantom_type_parameter_model_issue1370
 import serde_derive_propagation
+import trait_default_appending_its_own_item
+import trait_default_calls_on_self
+import trait_default_passes_self_by_value
 
 
 def main() -> None:
@@ -90,3 +101,6 @@ def main() -> None:
     isinstance_over_string_storages.main()
     phantom_type_parameter_model_issue1370.main()
     serde_derive_propagation.main()
+    trait_default_appending_its_own_item.main()
+    trait_default_calls_on_self.main()
+    trait_default_passes_self_by_value.main()

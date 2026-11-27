@@ -1,4 +1,4 @@
-# behavior: 10 former snapshots models and classes cases run in order, each program from its own module: class_field_visibility, class_refers_to_itself_through_option, classes, constructor_field_defaults, field_backed_method_arg, list_pop_and_clone_of_models, model_alias_expressions, model_with_serde_alias, models, phantom_type_param
+# behavior: 12 former snapshots models and classes cases run in order, each program from its own module: class_field_visibility, class_refers_to_itself_through_option, classes, constructor_field_defaults, field_backed_method_arg, list_pop_and_clone_of_models, model_alias_expressions, model_with_serde_alias, models, phantom_type_param, self_referential_class_field_assign, unit_model_field_issue1978
 # expect-stdout:
 #  3
 #  id:int
@@ -53,6 +53,10 @@
 #  (amount * 2)
 #  (label * x)
 #  Column(sql="amount")
+#  5
+#  9
+#  none
+#  constructed
 
 """Run the program of each former case in order."""
 
@@ -66,9 +70,11 @@ import model_alias_expressions
 import model_with_serde_alias
 import models
 import phantom_type_param
+import case_self_referential_class_field_assign
+import unit_model_field_issue1978
 
 
-def main() -> None:
+async def main() -> None:
     """Run each former case's program in turn."""
     class_field_visibility.main()
     class_refers_to_itself_through_option.main()
@@ -80,3 +86,5 @@ def main() -> None:
     model_with_serde_alias.main()
     models.main()
     phantom_type_param.main()
+    case_self_referential_class_field_assign.main()
+    await unit_model_field_issue1978.main()

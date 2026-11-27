@@ -1,4 +1,4 @@
-# behavior: 10 former snapshots collections and strings cases run in order, each program from its own module: empty_list_string_arg, enumerate_tuple_unpack, generator_expression_and_yield, imported_stdlib_value_fragment, iterator_adapter_sources, json_stringify_builtin, list_and_comprehension_over_generator, list_append_takes_a_fresh_task_handle, list_repeat, list_str_append_literal
+# behavior: 14 former snapshots collections and strings cases run in order, each program from its own module: empty_list_string_arg, enumerate_tuple_unpack, generator_expression_and_yield, imported_stdlib_value_fragment, iterator_adapter_sources, json_stringify_builtin, list_and_comprehension_over_generator, list_append_takes_a_fresh_task_handle, list_repeat, list_str_append_literal, shared_string_list_helpers, storable_sha256_hasher, str_over_arithmetic_expression, string_operations
 # expect-stdout:
 #  0
 #  a 0 0
@@ -32,6 +32,26 @@
 #  1
 #  -1 seed 0 1 7
 #  orders_total count
+#  0 1 -1
+#  0 1 -1
+#  5 3
+#  true
+#  false
+#  3
+#  7
+#  12
+#  36
+#  -1
+#  2.5
+#  true
+#  HELLO WORLD hello world Hello World
+#  true false
+#  3 two
+#  hello python
+#  éll
+#  true true
+#  one, two, three
+#  hello world
 
 """Run the program of each former case in order."""
 
@@ -45,6 +65,10 @@ import list_and_comprehension_over_generator
 import list_append_takes_a_fresh_task_handle
 import list_repeat
 import list_str_append_literal
+import shared_string_list_helpers
+import storable_sha256_hasher
+import str_over_arithmetic_expression
+import string_operations
 
 
 async def main() -> None:
@@ -59,3 +83,7 @@ async def main() -> None:
     await list_append_takes_a_fresh_task_handle.main()
     list_repeat.main()
     list_str_append_literal.main()
+    shared_string_list_helpers.main()
+    storable_sha256_hasher.main()
+    str_over_arithmetic_expression.main()
+    string_operations.main()

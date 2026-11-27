@@ -1,4 +1,4 @@
-# behavior: 10 former cli values and calls cases run in order, each program from its own module: annotated_collection_literals, annotated_tuple_literal_types_its_elements, awaiting_each_task_handle_of_a_list, awaiting_task_handles_of_a_call_result_and_a_literal, awaiting_task_handles_of_nested_and_parenthesized_lists, bitwise_operators_keep_the_integer_type, callable_presets_of_constructors_and_declaration_safe_values, callable_stored_in_a_field_is_called, capturing_closures_as_result_combinator_callbacks, integer_literal_assigned_to_float_binding
+# behavior: 16 former cli values and calls cases run in order, each program from its own module: annotated_collection_literals, annotated_tuple_literal_types_its_elements, awaiting_each_task_handle_of_a_list, awaiting_task_handles_of_a_call_result_and_a_literal, awaiting_task_handles_of_nested_and_parenthesized_lists, bitwise_operators_keep_the_integer_type, callable_presets_of_constructors_and_declaration_safe_values, callable_stored_in_a_field_is_called, capturing_closures_as_result_combinator_callbacks, integer_literal_assigned_to_float_binding, const_frozen_collection_reads, str_const_assignment_to_owned_places, str_const_returned_as_frozen_str, tuple_assignment_swaps_fields_and_list_elements, tuple_assignment_takes_a_bare_tuple_value, tuple_unpacking_reassigns_names_inside_a_loop
 # expect-stdout:
 #  1
 #  a b 2
@@ -51,6 +51,45 @@
 #  3.0
 #  7.0
 #  2.5
+#  2
+#  true
+#  alpha beta
+#  false
+#  ALPHA
+#  2
+#  9
+#  ex
+#  ex
+#  2
+#  true
+#  false
+#  hello
+#  true
+#  true
+#  policy
+#  true
+#  true
+#  true
+#  true
+#  frozen
+#  true
+#  true
+#  policy frozen
+#  policy
+#  policy
+#  frozen
+#  frozen
+#  2
+#  2 1
+#  8 7
+#  30 10 20
+#  5 2
+#  2 1
+#  1 2
+#  3 4
+#  55
+#  0 1 1 2 3 5 8 13
+#  1 2
 
 """Run the program of each former case in order."""
 
@@ -64,6 +103,12 @@ import callable_presets_of_constructors_and_declaration_safe_values
 import callable_stored_in_a_field_is_called
 import capturing_closures_as_result_combinator_callbacks
 import integer_literal_assigned_to_float_binding
+import const_frozen_collection_reads
+import str_const_assignment_to_owned_places
+import str_const_returned_as_frozen_str
+import tuple_assignment_swaps_fields_and_list_elements
+import tuple_assignment_takes_a_bare_tuple_value
+import tuple_unpacking_reassigns_names_inside_a_loop
 
 
 async def main() -> None:
@@ -78,3 +123,9 @@ async def main() -> None:
     callable_stored_in_a_field_is_called.main()
     capturing_closures_as_result_combinator_callbacks.main()
     integer_literal_assigned_to_float_binding.main()
+    const_frozen_collection_reads.main()
+    str_const_assignment_to_owned_places.main()
+    str_const_returned_as_frozen_str.main()
+    tuple_assignment_swaps_fields_and_list_elements.main()
+    tuple_assignment_takes_a_bare_tuple_value.main()
+    tuple_unpacking_reassigns_names_inside_a_loop.main()

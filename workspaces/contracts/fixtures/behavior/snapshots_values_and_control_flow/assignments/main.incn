@@ -1,4 +1,4 @@
-# behavior: 10 former snapshots values and control flow cases run in order, each program from its own module: assignments, control_flow, inferred_reassign, literals, loop_expressions, mixed_f32_arithmetic, mixed_numeric_and_float_display, operators, type_annotations, user_defined_operators
+# behavior: 13 former snapshots values and control flow cases run in order, each program from its own module: assignments, control_flow, inferred_reassign, literals, loop_expressions, mixed_f32_arithmetic, mixed_numeric_and_float_display, operators, type_annotations, user_defined_operators, const_str_chain_and_bytes, descriptor_const_with_empty_frozen_list, exact_float_ingress_and_aggregates
 # expect-stdout:
 #  42 hello true 2 1
 #  0 6.0 hello world
@@ -84,6 +84,32 @@
 #  7
 #  set 3 to 9
 #  5 5 -2
+#  hello world!
+#  hello world!?
+#  2
+#  2
+#  true
+#  0
+#  0.1
+#  none
+#  2.5
+#  3.0
+#  2.5
+#  true
+#  nan
+#  false
+#  4.0
+#  1.0
+#  4.0
+#  false
+#  true
+#  2.5
+#  nan
+#  2.5
+#  false
+#  finished
+#  1 1 1 1 1 1 1 1 1 1 1 1
+#  0.3
 
 """Run the program of each former case in order."""
 
@@ -97,6 +123,9 @@ import mixed_numeric_and_float_display
 import operators
 import type_annotations
 import user_defined_operators
+import const_str_chain_and_bytes
+import descriptor_const_with_empty_frozen_list
+import exact_float_ingress_and_aggregates
 
 
 def main() -> None:
@@ -111,3 +140,6 @@ def main() -> None:
     operators.main()
     type_annotations.main()
     user_defined_operators.main()
+    const_str_chain_and_bytes.main()
+    descriptor_const_with_empty_frozen_list.main()
+    exact_float_ingress_and_aggregates.main()

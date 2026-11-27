@@ -1,4 +1,4 @@
-# behavior: 9 former ownership parameters and receivers cases run in order, each program from its own module: channel_ends_unpacked_and_sent_through_a_wrapper, explicit_async_bodies, explicit_body_accepts_borrowed_nested_len, explicit_body_accepts_compound_loop_conditions, explicit_body_accepts_for_loops, explicit_body_accepts_fresh_model_arguments, explicit_body_accepts_generic_method_calls, explicit_body_accepts_index_assignment, explicit_body_accepts_nested_list_literals
+# behavior: 13 former ownership parameters and receivers cases run in order, each program from its own module: channel_ends_unpacked_and_sent_through_a_wrapper, explicit_async_bodies, explicit_body_accepts_borrowed_nested_len, explicit_body_accepts_compound_loop_conditions, explicit_body_accepts_for_loops, explicit_body_accepts_fresh_model_arguments, explicit_body_accepts_generic_method_calls, explicit_body_accepts_index_assignment, explicit_body_accepts_nested_list_literals, comprehensions_and_list_constructor_sources, explicit_body_accepts_unit_variant_matches, explicit_native_calls, storage_and_graph_reader_contracts
 # expect-stdout:
 #  got 1
 #  got 2
@@ -16,6 +16,47 @@
 #  true
 #  true
 #  2
+#  ["ab", "def"] 3
+#  [3, 1, 2] 9 4
+#  [4, 2]
+#  ["ab", "c", "def"] ["ab", "c", "def", "z"] 4
+#  ["h", "e", "y"]
+#  ["x", "y"] 2 2
+#  bound
+#  3 true 3
+#  2 3
+#  0 0 0
+#  4 5
+#  1 2
+#  1
+#  1
+#  1
+#  2
+#  true
+#  true
+#  false
+#  true
+#  true
+#  true
+#  1
+#  0
+#  10
+#  2
+#  4
+#  2
+#  3
+#  3
+#  2
+#  3
+#  3
+#  1
+#  3
+#  4
+#  8
+#  9
+#  2
+#  0
+#  3
 
 """Run the program of each former case in order."""
 
@@ -28,6 +69,10 @@ import explicit_body_accepts_fresh_model_arguments
 import explicit_body_accepts_generic_method_calls
 import explicit_body_accepts_index_assignment
 import explicit_body_accepts_nested_list_literals
+import comprehensions_and_list_constructor_sources
+import explicit_body_accepts_unit_variant_matches
+import explicit_native_calls
+import storage_and_graph_reader_contracts
 
 
 async def main() -> None:
@@ -41,3 +86,7 @@ async def main() -> None:
     explicit_body_accepts_generic_method_calls.main()
     explicit_body_accepts_index_assignment.main()
     explicit_body_accepts_nested_list_literals.main()
+    comprehensions_and_list_constructor_sources.main()
+    explicit_body_accepts_unit_variant_matches.main()
+    explicit_native_calls.main()
+    storage_and_graph_reader_contracts.main()

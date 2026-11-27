@@ -1,4 +1,4 @@
-# behavior: 10 former snapshots functions and projections cases run in order, each program from its own module: basic_function, fixed_call_unpack, function_alias_and_partial, function_calls, function_references, functions, method_alias_and_partial, param_mut_unused, power_operator_receivers, returns
+# behavior: 13 former snapshots functions and projections cases run in order, each program from its own module: basic_function, fixed_call_unpack, function_alias_and_partial, function_calls, function_references, functions, method_alias_and_partial, param_mut_unused, power_operator_receivers, returns, trait_method_and_adopted_default, validated_newtype_hook_and_coercion, variadic_calls
 # expect-stdout:
 #  3
 #  London
@@ -43,6 +43,21 @@
 #  15
 #  Hello
 #  positive
+#  ready
+#  default
+#  ready
+#  bound
+#  ok 1
+#  err value must be positive
+#  accepted 1
+#  hook 3
+#  count 9
+#  count 11
+#  hook 5
+#  6
+#  10
+#  14
+#  30
 
 """Run the program of each former case in order."""
 
@@ -56,6 +71,9 @@ import method_alias_and_partial
 import param_mut_unused
 import power_operator_receivers
 import returns
+import trait_method_and_adopted_default
+import validated_newtype_hook_and_coercion
+import variadic_calls
 
 
 def main() -> None:
@@ -70,3 +88,6 @@ def main() -> None:
     param_mut_unused.main()
     power_operator_receivers.main()
     returns.main()
+    trait_method_and_adopted_default.main()
+    validated_newtype_hook_and_coercion.main()
+    variadic_calls.main()
