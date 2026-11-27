@@ -348,6 +348,7 @@ pub(super) fn checked_modules(
     collect_codegraph: bool,
     inspection: bool,
 ) -> Result<CheckedProgram, String> {
+    let mut prior_body_evaluations = 0usize;
     loop {
         match checked_attempt(
             unit,
@@ -359,8 +360,12 @@ pub(super) fn checked_modules(
             collect_codegraph,
             inspection,
         )? {
-            CheckedAttempt::Complete(program) => return Ok(program),
-            CheckedAttempt::Reopen(changes, current) => {
+            CheckedAttempt::Complete(mut program) => {
+                program.body_evaluations = program.body_evaluations.saturating_add(prior_body_evaluations);
+                return Ok(program);
+            }
+            CheckedAttempt::Reopen(changes, current, body_evaluations) => {
+                prior_body_evaluations = prior_body_evaluations.saturating_add(body_evaluations);
                 graph_body_records.reopen_callers(changes)?;
                 graph_body_records.retain_current(current);
             }
@@ -373,6 +378,7 @@ enum CheckedAttempt {
     Reopen(
         BTreeMap<String, BTreeSet<String>>,
         Vec<incan_frontend::checker_records::GraphBodyRecord>,
+        usize,
     ),
 }
 
@@ -464,6 +470,7 @@ fn checked_attempt(
         dependencies
     };
     let contextual_rank = graph_body_records.has_contextual_rank();
+    let mut body_evaluations = 0usize;
     let mut analysis = {
         let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::analyze_modules", modules = modules.len()).entered();
         session
@@ -473,8 +480,10 @@ fn checked_attempt(
                 std::sync::Arc::clone(&imports),
                 library && collect_codegraph,
                 &mut |module, checker, provider| {
+                    let checked_bodies = checker.check_work().body_local_checks;
+                    body_evaluations = body_evaluations.saturating_add(checked_bodies);
                     if contextual_rank {
-                        graph_body_records.count_contextual_statements(checker.check_work().body_local_checks);
+                        graph_body_records.count_contextual_statements(checked_bodies);
                     }
                     callable_products.observe(module, checker);
                     if let Some(indexes) = &namespace_indexes
@@ -616,7 +625,7 @@ fn checked_attempt(
         if !changed.is_empty() {
             let current =
                 graph_body_output.completed_owners(&modules, &mut bodies[loaf_modules..], &reads_by_module)?;
-            return Ok(CheckedAttempt::Reopen(changed, current));
+            return Ok(CheckedAttempt::Reopen(changed, current, body_evaluations));
         }
         if graph_body_output.requests_contracts() {
             settled_inputs = Some(access);
@@ -696,6 +705,7 @@ fn checked_attempt(
             .entered();
     let program = complete_dependency_context(
         CheckedProgram {
+            body_evaluations,
             cacheable_bodies,
             member_owners,
             retained_namespaces,
@@ -1194,6 +1204,7 @@ mod tests {
         let (callables, start) = retain_linked_loaf_declarations(&mut modules, 1, 1);
         modules[4].loaf_callables = callables;
         let mut program = CheckedProgram {
+            body_evaluations: 0,
             retained_namespaces: vec![
                 RetainedNamespaceBody {
                     source: "src/empty.incn".into(),
