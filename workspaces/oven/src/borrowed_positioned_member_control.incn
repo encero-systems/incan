@@ -3,21 +3,27 @@
 from std.encoding.hex import hexlify
 from std.fs import Path
 from std.hash import sha256
-from std.json import parse
-from pub::incan_mir_plan import decode_plan_module
+from std.json import JsonValue, parse
+from pub::incan_mir_plan import (
+    LoweringRefusal, decode_lowering_event, decode_plan_function_record, decode_plan_module,
+    encode_lowering_refusal, product_frame_names,
+)
 from compiler_graph_records import EditCutoff, reusable_evaluation
 from compiler_plan_values import LOWERING_PROFILE, select_plan_modules
 from json_fields import required_text
-from lowering_record_fixtures import proof_count
+from engine_protocol_fixtures import json_text_is
+from files import write
+from lowering_record_fixtures import lowering_example_run, proof_count, stop_example_engine
 from store_path_conversion import snapshot as store_snapshot
 
 
-pub def verify_borrowed_gamma_members(store: Path) -> Result[None, str]:
+pub def verify_borrowed_gamma_members(store: Path) -> Result[list[str], str]:
     """Read genuine kept gamma identities after beta and before the next compiler request."""
     graph = store_snapshot(store).map_err((error) => error.message())?
     cutoff = EditCutoff(active=true)
     selection = select_plan_modules(graph, "main", ["lone_alpha.incn"], [], cutoff=cutoff)?
     mut matched = 0
+    mut helpers: list[str] = []
     for record in selection.records:
         if record.plan.module != "lone_gamma":
             continue
@@ -44,11 +50,20 @@ pub def verify_borrowed_gamma_members(store: Path) -> Result[None, str]:
         for member in decoded.functions:
             if len(member.event) == 0:
                 return Err("gamma's authenticated Plan lacks its current event bytes")
+            event = decode_lowering_event(member.event)?
+            product = decode_plan_function_record(event.product)?
+            frames = product_frame_names(product.function)?
+            if member.identity.startswith("function:lone_gamma::lone_gamma_two|"):
+                helpers = frames
+            elif len(frames) != 0:
+                return Err("the unchanged gamma sibling unexpectedly carries a helper")
             current_members.append(f"{member.identity}\t{member.symbol}\t{member.function}\t{member.key}")
         if selected_members != current_members:
             return Err("the retained gamma members differ from their current ordered Plan entries")
     if matched != 1:
         return Err("the current graph has no unique kept gamma module")
+    if len(helpers) == 0:
+        return Err("gamma_two's selected current product does not carry a real helper")
     moved = select_plan_modules(graph, "main", ["lone_alpha.incn"], [],
         changed_positions=set(["lone_gamma.incn"]), cutoff=cutoff)?
     mut repositioned = 0
@@ -59,7 +74,7 @@ pub def verify_borrowed_gamma_members(store: Path) -> Result[None, str]:
             repositioned += 1
     if repositioned != 1:
         return Err("the moved gamma metadata is not unique")
-    return Ok(None)
+    return Ok(helpers)
 
 
 pub def ordinary_member_rows(trace: Path) -> Result[Dict[str, int], str]:
@@ -81,25 +96,120 @@ pub def ordinary_member_rows(trace: Path) -> Result[Dict[str, int], str]:
 
 
 pub def verify_alpha_request_routes(before: Dict[str, int], after: Dict[str, int]) -> Result[None, str]:
-    """Restore changed alpha through its current paths and receive both unchanged gamma members by identity."""
+    """Keep changed alpha on its keyed paths and restore only the gamma member with a helper."""
     for label in ["lowered ordinary lone_alpha::lone_alpha_one", "reused ordinary lone_alpha::lone_alpha_two"]:
         assert after.get(label, 0) - before.get(label, 0) == 1, f"ordinary alpha edit did not emit {label} once"
     for label in ["admitted ordinary lone_alpha::lone_alpha_one", "admitted ordinary lone_alpha::lone_alpha_two"]:
         assert after.get(label, 0) == before.get(label, 0), f"changed alpha used the unchanged admitted route: {label}"
-    members = ["lone_gamma::lone_gamma_one", "lone_gamma::lone_gamma_two"]
-    mut restored = 0
-    for member in members:
+    stable = "lone_gamma::lone_gamma_one"
+    carried = "lone_gamma::lone_gamma_two"
+    for member in [stable, carried]:
         for route in ["lowered", "reused"]:
             label = f"{route} ordinary {member}"
             assert after.get(label, 0) == before.get(label, 0), f"unchanged gamma used its keyed route: {member}"
-        label = f"admitted ordinary {member}"
+    for (route, member, expected) in [
+        ("admitted", carried, 1), ("direct", carried, 0), ("admitted", stable, 0), ("direct", stable, 1),
+    ]:
+        label = f"{route} ordinary {member}"
         completed = after.get(label, 0) - before.get(label, 0)
-        assert completed >= 0 and completed <= 1, f"ordinary gamma restored {member} {completed} times"
-        restored += completed
-    assert restored == 0, f"unchanged gamma completed {restored} owned ordinary restores"
-    for member in members:
-        label = f"direct ordinary {member}"
-        assert after.get(label, 0) - before.get(label, 0) == 1, f"ordinary gamma did not receive {member} by identity"
+        assert completed == expected, f"mixed gamma {label} completed {completed} times, expected {expected}"
+    return Ok(None)
+
+
+pub def verify_gamma_helper_publication(
+    helpers: list[str], plan: Path, seed: Borrowed[Dict[str, str]], beta: Borrowed[Dict[str, str]], alpha: Borrowed[Dict[str, str]],
+    beta_proof: JsonValue, alpha_proof: JsonValue,
+) -> Result[None, str]:
+    """Join the retained helper's actual native definition and the refusal files read by both warm requests."""
+    native = plan.read_text("utf-8", "strict").map_err((error) => error.message())?
+    before = warm_refusals(seed, beta)?
+    after = warm_refusals(beta, alpha)?
+    assert proof_count(beta_proof, "native_interface_evaluations")? == 0
+    assert proof_count(alpha_proof, "native_interface_evaluations")? == 0
+    assert before == after, "the unchanged helper changed the decoded refusal file cohort"
+    mut expected_sizes: list[int] = []
+    for helper in helpers:
+        definitions = [line for line in native.split("\n") if line.startswith("plan-function\t") and line.endswith("\t" + helper)]
+        assert len(definitions) == 1, f"expected one native Plan definition for carried helper {helper}"
+        refusal = LoweringRefusal(
+            function=helper, identity=helper,
+            refusal="native-interface refuses a helper frame carried inside its caller's product",
+        )
+        expected_sizes.append(len(encode_lowering_refusal(refusal)?))
+    assert sorted([size for size in after.values()]) == sorted(expected_sizes), "the selected request did not read all carried-helper refusals"
+    return Ok(None)
+
+
+def warm_refusals(before: Borrowed[Dict[str, str]], after: Borrowed[Dict[str, str]]) -> Result[Dict[str, int], str]:
+    """Extract the actual request-owned refusal names and sizes from a new trace window."""
+    mut files: Dict[str, int] = {}
+    for work in after.keys():
+        if work in before:
+            continue
+        row = parse(after[work]).map_err((error) => error.message())?
+        if json_text_is(row, "operation", "file_read"):
+            path = Path(required_text(row, "key")?)
+            name = path.name()
+            if name.endswith(".refusal"):
+                if name in files:
+                    return Err("the request read an interface refusal twice")
+                files[name] = proof_count(row, "bytes")?
+    return Ok(files)
+
+
+pub def write_gamma_fixture(root: Path) -> Result[None, str]:
+    """Write a stable ordinary sibling next to an unchanged member with a captured callable."""
+    sibling = "pub def lone_gamma_one(value: int) -> int:\n    return value + 1\n\n\n"
+    return write(root.joinpath("lone_gamma.incn"), sibling + gamma_helper_body())
+
+
+def gamma_helper_body() -> str:
+    """Keep the helper's semantic body identical when its sibling is removed."""
+    return (
+        "pub def lone_gamma_two(value: int) -> int:\n"
+        + "    add: (int) -> int = (offset) => value + offset\n"
+        + '    return add(value + len(" ".join(["a", "b", "c"][:value + 1])))\n'
+    )
+
+
+pub def verify_gamma_removal_and_parity(
+    binary: str, source: Path, store: Path, trace: Path, before: Dict[str, int],
+) -> Result[None, str]:
+    """Check that removing the plain member invalidates its slot and that warm and fresh outputs agree."""
+    root = source.parent()
+    plan = root.joinpath("native.plan")
+    warm_plan = plan.read_bytes().map_err((error) => error.message())?
+    executable = root.joinpath("target/incan/release/bin/main")
+    warm_executable = executable.read_bytes().map_err((error) => error.message())?
+    verify_removed_gamma_member(binary, source, store, trace, before)?
+    stop_example_engine(binary, store)?
+    write_gamma_fixture(root)?
+    root.joinpath("target").remove_tree().map_err((error) => error.message())?
+    cold_store = root.joinpath("cold-store")
+    _ = lowering_example_run(binary, source, cold_store, "25")?
+    stop_example_engine(binary, cold_store)?
+    assert plan.read_bytes().map_err((error) => error.message())? == warm_plan, "warm and fresh native Plans differ"
+    assert executable.read_bytes().map_err((error) => error.message())? == warm_executable, "warm and fresh executables differ"
+    return Ok(None)
+
+
+def verify_removed_gamma_member(
+    binary: str, source: Path, store: Path, trace: Path, before: Dict[str, int],
+) -> Result[None, str]:
+    """Remove the unchanged sibling and its call, and refuse its old slot on the real next request."""
+    original = source.read_text("utf-8", "strict").map_err((error) => error.message())?
+    shortened = original.replace("lone_gamma_one, ", "").replace(" + lone_gamma_one(1)", "")
+    assert shortened != original
+    write(source, shortened)?
+    write(source.parent().joinpath("lone_gamma.incn"), gamma_helper_body())?
+    _ = lowering_example_run(binary, source, store, "23", trace=trace)?
+    write(source, original)?
+    after = ordinary_member_rows(trace)?
+    for route in ["lowered", "reused", "admitted", "direct"]:
+        label = f"{route} ordinary lone_gamma::lone_gamma_one"
+        assert after.get(label, 0) == before.get(label, 0), f"removed gamma member reached the Plan: {label}"
+    label = "direct ordinary lone_gamma::lone_gamma_two"
+    assert after.get(label, 0) == before.get(label, 0), "changed gamma membership reused its old slot inventory"
     return Ok(None)
 
 
