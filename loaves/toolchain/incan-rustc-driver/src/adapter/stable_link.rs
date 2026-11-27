@@ -379,38 +379,128 @@ fn link_input_suffix(path: &Path) -> io::Result<Option<&'static str>> {
 /// those exact bytes; one that does not, as a power loss before the unit's seal can leave it, is replaced whole by a
 /// verified copy.
 fn stable_input(store: &Path, source: &Path, suffix: &str) -> io::Result<PathBuf> {
-    let digest = identified_digest(store, source, link_input_digest)?;
-    let directory = store.join("link-inputs/sha256").join(&digest[..2]);
-    let target = directory.join(format!("{digest}.{suffix}"));
+    let mut source = LinkInput::admit(store, source, None)?;
+    let directory = store.join("link-inputs/sha256").join(&source.digest[..2]);
+    let target = directory.join(format!("{}.{suffix}", source.digest));
     fs::create_dir_all(&directory)?;
-    let damaged = target.is_file();
-    if damaged && identified_digest(store, &target, link_input_digest)? == digest {
+    let mut damaged = target.is_file();
+    if damaged && identified_digest(store, &target, link_input_digest)? == source.digest {
+        source.require_current()?;
         return Ok(target);
     }
+    // Only repairers take the existing shard's lease. A concurrent repair may have settled the target while we wait.
+    let _repair = if damaged {
+        #[cfg(test)]
+        tests::align_repairers()?;
+        let lease = File::open(&directory)?;
+        lease.lock()?;
+        damaged = target.is_file();
+        if damaged && identified_digest(store, &target, link_input_digest)? == source.digest {
+            source.require_current()?;
+            return Ok(target);
+        }
+        Some(lease)
+    } else {
+        None
+    };
 
     let number = NEXT_TEMPORARY.fetch_add(1, Ordering::Relaxed);
-    let temporary = directory.join(format!(".{digest}.{}.{number}.tmp", std::process::id()));
-    let copied = copy_object(source, &temporary).and_then(|()| {
-        if link_input_digest(&temporary)? != digest {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "stable linker object changed while copying",
-            ));
-        }
+    let temporary = directory.join(format!(".{}.{}.{number}.tmp", source.digest, std::process::id()));
+    let copied = copy_object(&mut source, &temporary).and_then(|()| {
         if damaged {
-            return fs::rename(&temporary, &target);
+            fs::rename(&temporary, &target)?;
+            return Ok(true);
         }
         match fs::hard_link(&temporary, &target) {
-            Ok(()) => Ok(()),
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists && link_input_digest(&target)? == digest => {
-                Ok(())
+            Ok(()) => Ok(true),
+            Err(error)
+                if error.kind() == io::ErrorKind::AlreadyExists && link_input_digest(&target)? == source.digest =>
+            {
+                Ok(false)
             }
             Err(error) => Err(error),
         }
     });
-    let _ = fs::remove_file(&temporary);
-    copied?;
+    let removed = fs::remove_file(&temporary);
+    if copied? {
+        match removed {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+        verify_published_input(store, &target, &source.digest)?;
+    }
     Ok(target)
+}
+
+/// One authenticated input open through any copy, with its exact current file observation.
+struct LinkInput<'a> {
+    path: &'a Path,
+    file: File,
+    stamp: String,
+    size: u64,
+    digest: String,
+}
+
+impl<'a> LinkInput<'a> {
+    /// Admit this open file by its matching identity record or hash the same descriptor that a copy will read.
+    fn admit(store: &Path, path: &'a Path, expected: Option<&str>) -> io::Result<Self> {
+        let mut file = File::open(path)?;
+        let metadata = file.metadata()?;
+        let stamp = file_identity(&metadata);
+        let record = identity_record(store, &metadata);
+        let (digest, read) = match recorded_digest(&record, &stamp) {
+            Some(digest) => (digest, false),
+            None => (traced_link_digest(path, || digest_bytes(path, &mut file))?, true),
+        };
+        if expected.is_some_and(|expected| expected != digest) {
+            return Err(published_content_error());
+        }
+        let input = Self {
+            path,
+            file,
+            stamp,
+            size: metadata.len(),
+            digest,
+        };
+        input.require_current()?;
+        if read {
+            record_identity(&record, &format!("{} {}\n", input.stamp, input.digest));
+        }
+        Ok(input)
+    }
+
+    /// Reject stale bytes if the open input or the name the caller selected has changed.
+    fn require_current(&self) -> io::Result<()> {
+        if file_identity(&self.file.metadata()?) == self.stamp && file_identity(&fs::metadata(self.path)?) == self.stamp
+        {
+            return Ok(());
+        }
+        Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "stable linker object changed while copying",
+        ))
+    }
+}
+
+/// Verify the newly published file after the temporary name is gone and admit its settled identity.
+fn verify_published_input(store: &Path, target: &Path, expected: &str) -> io::Result<()> {
+    let before = fs::symlink_metadata(target)?;
+    if before.is_file() && before.mode() & 0o222 == 0 {
+        let observed = LinkInput::admit(store, target, Some(expected))?;
+        if observed.stamp == file_identity(&before) && file_identity(&fs::symlink_metadata(target)?) == observed.stamp {
+            return Ok(());
+        }
+    }
+    Err(published_content_error())
+}
+
+/// Refuse a published object whose settled file or bytes disagree with the admitted content.
+fn published_content_error() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidData,
+        "published stable linker input differs from its verified content",
+    )
 }
 
 /// Copy into a new sibling, hand its bytes to the device, and make the completed store input immutable before
@@ -421,10 +511,20 @@ fn stable_input(store: &Path, source: &Path, suffix: &str) -> io::Result<PathBuf
 /// one full device flush before any view of it exists, and that flush covers every earlier write to the same device,
 /// this copy included. Until that seal nothing names this link's output, and a power loss in between can at worst
 /// leave a content name over wrong bytes, which [`stable_input`] replaces at its next use.
-fn copy_object(source: &Path, target: &Path) -> io::Result<()> {
-    let mut input = File::open(source)?;
+fn copy_object(source: &mut LinkInput<'_>, target: &Path) -> io::Result<()> {
+    source.require_current()?;
+    source.file.rewind()?;
     let mut output = OpenOptions::new().write(true).create_new(true).open(target)?;
-    io::copy(&mut input, &mut output)?;
+    let copied = io::copy(&mut source.file, &mut output)?;
+    #[cfg(test)]
+    tests::record_link_copy(copied);
+    source.require_current()?;
+    if copied != source.size {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "stable linker object changed while copying",
+        ));
+    }
     // SAFETY: `output` is open for the whole call, so its descriptor is valid.
     if unsafe { libc::fsync(output.as_raw_fd()) } != 0 {
         return Err(io::Error::last_os_error());
@@ -446,21 +546,29 @@ pub(crate) fn identified_digest(
 ) -> io::Result<String> {
     let metadata = fs::metadata(path)?;
     let before = file_identity(&metadata);
-    let record = store
-        .join("link-inputs/identities")
-        .join(format!("{}-{}", metadata.dev(), metadata.ino()));
-    if let Ok(text) = fs::read_to_string(&record) {
-        if let Some((identity, digest)) = text.trim_end().rsplit_once(' ') {
-            if identity == before && digest.len() == 64 {
-                return Ok(digest.to_owned());
-            }
-        }
+    let record = identity_record(store, &metadata);
+    if let Some(digest) = recorded_digest(&record, &before) {
+        return Ok(digest);
     }
     let digest = hash(path)?;
     if file_identity(&fs::metadata(path)?) == before {
         record_identity(&record, &format!("{before} {digest}\n"));
     }
     Ok(digest)
+}
+
+/// Select the existing per-inode receipt location for one observed input.
+fn identity_record(store: &Path, metadata: &fs::Metadata) -> PathBuf {
+    store
+        .join("link-inputs/identities")
+        .join(format!("{}-{}", metadata.dev(), metadata.ino()))
+}
+
+/// Read a receipt only when it names the exact generation now in use.
+fn recorded_digest(record: &Path, stamp: &str) -> Option<String> {
+    let text = fs::read_to_string(record).ok()?;
+    let (identity, digest) = text.trim_end().rsplit_once(' ')?;
+    (identity == stamp && digest.len() == 64).then(|| digest.to_owned())
 }
 
 /// The identity a file's content is recorded under; a write changes its size, modification time or change time.
@@ -494,13 +602,22 @@ fn record_identity(record: &Path, text: &str) {
 
 /// Hash one link input, as an invocation span a test can count: the linker's every read of an input's bytes.
 fn link_input_digest(path: &Path) -> io::Result<String> {
+    traced_link_digest(path, || file_digest(path))
+}
+
+/// Mark all payload authentication, whether it starts from a path or an already admitted descriptor.
+fn traced_link_digest(path: &Path, digest: impl FnOnce() -> io::Result<String>) -> io::Result<String> {
     let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::link_input_digest", input = %path.display()).entered();
-    file_digest(path)
+    digest()
 }
 
 /// Hash one complete native input without retaining a program-sized allocation.
 pub(crate) fn file_digest(path: &Path) -> io::Result<String> {
-    let mut file = File::open(path)?;
+    digest_bytes(path, &mut File::open(path)?)
+}
+
+/// Hash the exact opened file through the existing bounded checksum buffer.
+fn digest_bytes(_path: &Path, file: &mut File) -> io::Result<String> {
     let mut hash = Sha256::new();
     let mut buffer = [0_u8; 64 * 1024];
     loop {
@@ -509,16 +626,94 @@ pub(crate) fn file_digest(path: &Path) -> io::Result<String> {
             break;
         }
         hash.update(&buffer[..length]);
+        #[cfg(test)]
+        tests::record_link_hash(_path, length as u64);
     }
     Ok(hex::encode(hash.finalize()))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{LAUNCHER, identified_digest, link_input_digest, linker, stable_input};
+    use super::{LAUNCHER, linker, stable_input, verified_content_object};
+    use std::cell::Cell;
+    use std::ffi::OsStr;
     use std::fs;
     use std::io;
+    use std::os::unix::fs::MetadataExt;
     use std::path::{Path, PathBuf};
+    use std::sync::{Barrier, mpsc};
+    use std::time::Duration;
+
+    type RepairRendezvous = (mpsc::Sender<()>, mpsc::Receiver<()>);
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    struct LinkWork {
+        read: u64,
+        source_hash: u64,
+        temporary_hash: u64,
+        final_hash: u64,
+        staged: u64,
+    }
+
+    impl LinkWork {
+        const ZERO: Self = Self {
+            read: 0,
+            source_hash: 0,
+            temporary_hash: 0,
+            final_hash: 0,
+            staged: 0,
+        };
+
+        /// Total bytes hashed regardless of where verification happens in the link.
+        fn hashed(self) -> u64 {
+            self.source_hash + self.temporary_hash + self.final_hash
+        }
+    }
+
+    thread_local! {
+        static LINK_WORK: Cell<LinkWork> = const { Cell::new(LinkWork::ZERO) };
+        static REPAIR_RENDEZVOUS: Cell<Option<RepairRendezvous>> = const { Cell::new(None) };
+    }
+
+    /// Let both test callers observe the damaged target before either can claim its repair.
+    pub(super) fn align_repairers() -> io::Result<()> {
+        if let Some((ready, peer)) = REPAIR_RENDEZVOUS.with(Cell::take) {
+            ready.send(()).map_err(io::Error::other)?;
+            peer.recv_timeout(Duration::from_secs(10)).map_err(io::Error::other)?;
+        }
+        Ok(())
+    }
+
+    /// Observe bytes read from the source and written to private stage by the production copy.
+    pub(super) fn record_link_copy(bytes: u64) {
+        LINK_WORK.with(|work| {
+            let mut current = work.get();
+            current.read += bytes;
+            current.staged += bytes;
+            work.set(current);
+        });
+    }
+
+    /// Attribute production digest reads to the original source, private temporary, or settled target.
+    pub(super) fn record_link_hash(path: &Path, bytes: u64) {
+        LINK_WORK.with(|work| {
+            let mut current = work.get();
+            current.read += bytes;
+            if path.extension() == Some(OsStr::new("tmp")) {
+                current.temporary_hash += bytes;
+            } else if path.parent().and_then(Path::parent).and_then(Path::file_name) == Some(OsStr::new("sha256")) {
+                current.final_hash += bytes;
+            } else {
+                current.source_hash += bytes;
+            }
+            work.set(current);
+        });
+    }
+
+    /// Return the bytes processed since the previous observation.
+    fn take_link_work() -> LinkWork {
+        LINK_WORK.with(|work| work.replace(LinkWork::ZERO))
+    }
 
     /// A fresh directory for one test.
     fn scratch(name: &str) -> io::Result<PathBuf> {
@@ -582,26 +777,123 @@ mod tests {
         fs::remove_dir_all(root)
     }
 
-    /// A content name left over wrong bytes is replaced by a verified copy, and an intact one is reused as it is.
+    /// Reuse a published target without repeated payload work and replace it whole when its settled bytes drift.
     #[test]
     fn a_damaged_content_name_is_replaced_whole() -> io::Result<()> {
         let root = scratch("damaged")?;
         let store = root.join("store");
         let object = root.join("unit.o");
-        fs::write(&object, b"object bytes")?;
+        let bytes = b"object bytes";
+        let length = bytes.len() as u64;
+        fs::write(&object, bytes)?;
+        let _ = take_link_work();
         let published = stable_input(&store, &object, "o")?;
-        assert_eq!(fs::read(&published)?, b"object bytes");
-        let mut permissions = fs::metadata(&published)?.permissions();
+        let publication = take_link_work();
+        assert!(verified_content_object(&store, &published));
+        assert_eq!(stable_input(&store, &object, "o")?, published);
+        let reuse = take_link_work();
+        assert_eq!(fs::read(&published)?, bytes);
+
+        // The old witness stays on disk while the same inode's contents change under its original size and mtime.
+        let original = fs::metadata(&published)?;
+        let stale = damage_without_mtime_change(&published, &original)?;
+        assert_eq!(stale.ino(), original.ino());
+        assert_eq!(stale.len(), original.len());
+        assert_eq!(stale.modified()?, original.modified()?);
+        assert!(!verified_content_object(&store, &published));
+        let refusal = take_link_work();
+        assert_eq!(refusal.final_hash, length);
+
+        // Repair publishes a different inode, and concurrent initial claimants agree on one verified target.
+        let repaired = stable_input(&store, &object, "o")?;
+        let _ = take_link_work();
+        assert_eq!(repaired, published);
+        assert_ne!(fs::metadata(&repaired)?.ino(), stale.ino());
+        assert_eq!(fs::read(&repaired)?, bytes);
+        assert!(verified_content_object(&store, &repaired));
+        let repaired_reuse = take_link_work();
+        verify_concurrent_publication(&root, &store)?;
+        let repair_staged = verify_concurrent_repair(&store, &object, &repaired, bytes)?;
+        fs::remove_dir_all(root)?;
+
+        assert!(
+            publication.hashed() + reuse.hashed() <= length * 2
+                && publication.read + reuse.read <= length * 3
+                && publication.staged + reuse.staged == length
+                && reuse == LinkWork::ZERO
+                && repaired_reuse == LinkWork::ZERO
+                && repair_staged == length,
+            "link work persisted across publication and reuse: {publication:?}, {reuse:?}, repair reuse {repaired_reuse:?}, concurrent repair staging {repair_staged}"
+        );
+        Ok(())
+    }
+
+    /// Change bytes in place while preserving the input's length, modification time and read-only mode.
+    fn damage_without_mtime_change(path: &Path, original: &fs::Metadata) -> io::Result<fs::Metadata> {
+        let mut permissions = original.permissions();
         #[allow(clippy::permissions_set_readonly_false)]
         permissions.set_readonly(false);
-        fs::set_permissions(&published, permissions)?;
-        fs::write(&published, b"")?;
-        let repaired = stable_input(&store, &object, "o")?;
-        assert_eq!(repaired, published);
-        assert_eq!(fs::read(&repaired)?, b"object bytes");
-        let digest = identified_digest(&store, &repaired, link_input_digest)?;
-        assert!(repaired.to_string_lossy().contains(&digest));
-        assert_eq!(stable_input(&store, &object, "o")?, repaired);
-        fs::remove_dir_all(root)
+        fs::set_permissions(path, permissions)?;
+        fs::write(path, b"Object bytes")?;
+        fs::OpenOptions::new()
+            .write(true)
+            .open(path)?
+            .set_times(fs::FileTimes::new().set_modified(original.modified()?))?;
+        fs::set_permissions(path, original.permissions())?;
+        fs::metadata(path)
+    }
+
+    /// Race two ordinary claimants to the same content while each owns its own staging work.
+    fn verify_concurrent_publication(root: &Path, store: &Path) -> io::Result<()> {
+        let source = root.join("parallel.o");
+        let bytes = b"parallel object";
+        fs::write(&source, bytes)?;
+        let barrier = Barrier::new(2);
+        let (first, second) = std::thread::scope(|scope| -> io::Result<_> {
+            let contender = scope.spawn(|| {
+                barrier.wait();
+                stable_input(store, &source, "o")
+            });
+            barrier.wait();
+            let first = stable_input(store, &source, "o");
+            let second = contender
+                .join()
+                .map_err(|_| io::Error::other("concurrent claimant panicked"))?;
+            Ok((first?, second?))
+        })?;
+        assert_eq!(first, second);
+        assert_eq!(fs::read(&first)?, bytes);
+        assert!(verified_content_object(store, &first));
+        Ok(())
+    }
+
+    /// Overlapping repairs return the same verified target and stage a single replacement in total.
+    fn verify_concurrent_repair(store: &Path, source: &Path, target: &Path, bytes: &[u8]) -> io::Result<u64> {
+        let original = fs::metadata(target)?;
+        let stale = damage_without_mtime_change(target, &original)?;
+        let claim = |rendezvous| -> io::Result<(PathBuf, LinkWork)> {
+            REPAIR_RENDEZVOUS.with(|pending| pending.set(Some(rendezvous)));
+            let _ = take_link_work();
+            let selected = stable_input(store, source, "o");
+            let _ = REPAIR_RENDEZVOUS.with(Cell::take);
+            let staged = take_link_work();
+            Ok((selected?, staged))
+        };
+        let (first_ready, observe_first) = mpsc::channel();
+        let (second_ready, observe_second) = mpsc::channel();
+        let ((first, first_work), (second, second_work)) = std::thread::scope(|scope| -> io::Result<_> {
+            let contender = scope.spawn(move || claim((second_ready, observe_first)));
+            let first = claim((first_ready, observe_second));
+            let second = contender
+                .join()
+                .map_err(|_| io::Error::other("concurrent repairer panicked"))?;
+            Ok((first?, second?))
+        })?;
+        assert_eq!(first, target);
+        assert_eq!(second, target);
+        assert_ne!(fs::metadata(target)?.ino(), stale.ino());
+        assert_eq!(fs::read(target)?, bytes);
+        assert!(verified_content_object(store, target));
+        Ok(first_work.staged + second_work.staged)
     }
 }
