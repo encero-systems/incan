@@ -1,0 +1,49 @@
+# behavior: 11 former execution scalars and bodies cases run in order, each program from its own module: missing_bool_identity_refuses_instead_of_guessing_from_its_name, parity_continue_and_a_loop_that_never_runs, parity_return_from_a_tuple_destructuring_loop, parity_unsafe_region_assigns_a_call_result, refuses_structural_aggregate_return_values, refuses_unsupported_body_ir_with_the_original_source_span, returns_a_value_returning_functions_trailing_expression, source_local_bool_keeps_its_declaration_identity, substring_non_membership, uses_python_signed_floor_division_and_modulo, writes_a_mut_list_parameter_back_to_the_caller
+# expect-stdout:
+#  true
+#  10
+#  10
+#  6
+#  1
+#  45
+#  5
+#  [1]
+#  0
+#  212
+#  42
+#  false
+#  -3
+#  -2
+#  42
+#  42
+#  310
+#  [0]
+
+"""Run the program of each former case in order."""
+
+import missing_bool_identity_refuses_instead_of_guessing_from_its_name
+import parity_continue_and_a_loop_that_never_runs
+import parity_return_from_a_tuple_destructuring_loop
+import parity_unsafe_region_assigns_a_call_result
+import refuses_structural_aggregate_return_values
+import refuses_unsupported_body_ir_with_the_original_source_span
+import returns_a_value_returning_functions_trailing_expression
+import source_local_bool_keeps_its_declaration_identity
+import substring_non_membership
+import uses_python_signed_floor_division_and_modulo
+import writes_a_mut_list_parameter_back_to_the_caller
+
+
+def main() -> None:
+    """Run each former case's program in turn."""
+    missing_bool_identity_refuses_instead_of_guessing_from_its_name.main()
+    parity_continue_and_a_loop_that_never_runs.main()
+    parity_return_from_a_tuple_destructuring_loop.main()
+    parity_unsafe_region_assigns_a_call_result.main()
+    refuses_structural_aggregate_return_values.main()
+    refuses_unsupported_body_ir_with_the_original_source_span.main()
+    returns_a_value_returning_functions_trailing_expression.main()
+    source_local_bool_keeps_its_declaration_identity.main()
+    substring_non_membership.main()
+    uses_python_signed_floor_division_and_modulo.main()
+    writes_a_mut_list_parameter_back_to_the_caller.main()

@@ -1,0 +1,66 @@
+# behavior: 10 former execution calls types and modules cases run in order, each program from its own module: executes_lazy_generator_adapters_with_local_callbacks, executes_partial_presets_source_defaults_and_named_overrides, executes_source_local_fieldless_enum_values_through_a_direct_callable, executes_source_local_nominal_model_values_through_a_direct_callable, executes_source_local_value_enum_members_through_a_direct_callable, executes_source_order_async_race_ties_with_loser_cancellation, executes_true_and_false_checks_for_the_bounded_primitive_target_set_is_bool, fixed_case_executes_every_admitted_target_with_exact_streams, keeps_an_unconsumed_generator_expression_deferred, keeps_an_unconsumed_generator_function_out_of_execution_evidence
+# expect-stdout:
+#  34
+#  868
+#  868
+#  42
+#  42
+#  42
+#  42
+#  false
+#  false
+#  42
+#  42
+#  42
+#  40
+#  40
+#  40
+#  42
+#  41
+#  404
+#  404
+#  404
+#  404
+#  404
+#  42
+#  1
+#  true
+#  false
+#  true
+#  true
+#  false
+#  true
+#  false
+#  true
+#  false
+#  isinstance targets
+#  true
+#  7
+#  42
+
+"""Run the program of each former case in order."""
+
+import executes_lazy_generator_adapters_with_local_callbacks
+import executes_partial_presets_source_defaults_and_named_overrides
+import executes_source_local_fieldless_enum_values_through_a_direct_callable
+import executes_source_local_nominal_model_values_through_a_direct_callable
+import executes_source_local_value_enum_members_through_a_direct_callable
+import executes_source_order_async_race_ties_with_loser_cancellation
+import executes_true_and_false_checks_for_the_bounded_primitive_target_set_is_bool
+import fixed_case_executes_every_admitted_target_with_exact_streams
+import keeps_an_unconsumed_generator_expression_deferred
+import keeps_an_unconsumed_generator_function_out_of_execution_evidence
+
+
+async def main() -> None:
+    """Run each former case's program in turn."""
+    executes_lazy_generator_adapters_with_local_callbacks.main()
+    executes_partial_presets_source_defaults_and_named_overrides.main()
+    executes_source_local_fieldless_enum_values_through_a_direct_callable.main()
+    executes_source_local_nominal_model_values_through_a_direct_callable.main()
+    executes_source_local_value_enum_members_through_a_direct_callable.main()
+    await executes_source_order_async_race_ties_with_loser_cancellation.main()
+    executes_true_and_false_checks_for_the_bounded_primitive_target_set_is_bool.main()
+    fixed_case_executes_every_admitted_target_with_exact_streams.main()
+    keeps_an_unconsumed_generator_expression_deferred.main()
+    keeps_an_unconsumed_generator_function_out_of_execution_evidence.main()

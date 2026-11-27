@@ -1,0 +1,12 @@
+# Former case keeps_an_unconsumed_generator_expression_deferred: keeps an unconsumed generator expression deferred
+
+"""Keeps an unconsumed generator expression deferred."""
+def program_result() -> int:
+  """Compute and return `7`."""
+  unused = (value // 0 for value in range(1, 2))
+  return 7
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

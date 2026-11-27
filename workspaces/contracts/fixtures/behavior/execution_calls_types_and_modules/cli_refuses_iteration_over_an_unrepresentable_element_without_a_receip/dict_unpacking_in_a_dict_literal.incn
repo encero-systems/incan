@@ -1,0 +1,12 @@
+# Former case dict_unpacking_in_a_dict_literal: a dict literal that unpacks another dict literal runs, and the program goes on to print its result
+
+"""A dict literal that unpacks another dict literal."""
+def program_result() -> int:
+  """Compute and return `0`."""
+  values = {**{"first": 1}}
+  return 0
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

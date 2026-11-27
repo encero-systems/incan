@@ -1,0 +1,11 @@
+# Former case scalar_conversions_do_not_admit_float_negation: scalar conversions do not admit float negation
+
+"""Scalar conversions do not admit float negation."""
+def program_result() -> int:
+    """Return the fixture expression `int(-3.9)`."""
+    return int(-3.9)
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

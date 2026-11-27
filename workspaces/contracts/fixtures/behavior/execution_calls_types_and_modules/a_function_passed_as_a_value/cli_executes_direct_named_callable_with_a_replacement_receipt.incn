@@ -1,0 +1,17 @@
+# Former case cli_executes_direct_named_callable_with_a_replacement_receipt: cli executes direct named callable with a replacement receipt
+
+"""Cli executes direct named callable with a replacement receipt."""
+def route(method: int, path: int, content_type: int = 3) -> int:
+  """Return the fixture expression `method * 100 + path * 10 + content_type`."""
+  return method * 100 + path * 10 + content_type
+
+def program_result() -> int:
+  """Compute and return `get(4)`."""
+  method = 1
+  get = partial route(method=method)
+  return get(4)
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

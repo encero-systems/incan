@@ -1,0 +1,11 @@
+# Former case refuses_structural_aggregate_return_values: refuses structural aggregate return values
+
+"""Refuses structural aggregate return values."""
+def program_result() -> list[int]:
+  """Return the fixture expression `[1]`."""
+  return [1]
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

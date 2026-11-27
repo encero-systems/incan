@@ -1,0 +1,15 @@
+# Former case executes_plain_scalar_tuple_collection_loop: executes plain scalar tuple collection loop
+
+"""Executes plain scalar tuple collection loop."""
+def program_result() -> int:
+  """Traverse `for pair in pairs` and return `7`."""
+  pairs = [(1, 2), (3, 4)]
+  for pair in pairs:
+    if false:
+      return 0
+  return 7
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

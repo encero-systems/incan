@@ -1,0 +1,11 @@
+# Former case string_membership_cli_records_the_shared_helper_result: string membership cli records the shared helper result
+
+"""String membership cli records the shared helper result."""
+def program_result() -> bool:
+    """Return the fixture expression `"a" in "abc"`."""
+    return "a" in "abc"
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

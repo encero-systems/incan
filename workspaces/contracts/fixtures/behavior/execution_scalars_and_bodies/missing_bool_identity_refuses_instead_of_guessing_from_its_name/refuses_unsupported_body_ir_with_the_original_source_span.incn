@@ -1,0 +1,12 @@
+# Former case refuses_unsupported_body_ir_with_the_original_source_span: refuses unsupported body ir with the original source span
+
+"""Refuses unsupported body ir with the original source span."""
+def program_result() -> int:
+  """Compute and return `0`."""
+  values = {**{"first": 1}}
+  return 0
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

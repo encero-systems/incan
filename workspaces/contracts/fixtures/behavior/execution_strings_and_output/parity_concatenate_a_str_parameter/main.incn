@@ -1,0 +1,47 @@
+# behavior: 10 former execution strings and output cases run in order, each program from its own module: parity_concatenate_a_str_parameter, parity_return_an_owned_local_str, refuses_f_string_interpolation_it_cannot_render_identically, refuses_json_stringify_outside_the_scalar_domain_at_the_call_span, refuses_to_print_a_value_it_cannot_render_identically, reused_program_io_isolates_each_successful_execution, selected_string_helpers_execute_from_checked_operations, short_writes_preserve_output_and_identity, split_default_separator_on_a_parameter, still_refuses_iteration_over_an_unrepresentable_element
+# expect-stdout:
+#  hello, Ada
+#  owned
+#  [1, 2]
+#  [1,2]
+#  [1, 2]
+#  success
+#  42
+#  string helper checks
+#  true
+#  a
+#  b
+#  c 2
+#  42
+#  [ a b ]
+#  [ a b ]
+#  3 alpha beta gamma
+#  0
+#  1
+
+"""Run the program of each former case in order."""
+
+import parity_concatenate_a_str_parameter
+import parity_return_an_owned_local_str
+import refuses_f_string_interpolation_it_cannot_render_identically
+import refuses_json_stringify_outside_the_scalar_domain_at_the_call_span
+import refuses_to_print_a_value_it_cannot_render_identically
+import reused_program_io_isolates_each_successful_execution
+import selected_string_helpers_execute_from_checked_operations
+import short_writes_preserve_output_and_identity
+import split_default_separator_on_a_parameter
+import still_refuses_iteration_over_an_unrepresentable_element
+
+
+def main() -> None:
+    """Run each former case's program in turn."""
+    parity_concatenate_a_str_parameter.main()
+    parity_return_an_owned_local_str.main()
+    refuses_f_string_interpolation_it_cannot_render_identically.main()
+    refuses_json_stringify_outside_the_scalar_domain_at_the_call_span.main()
+    refuses_to_print_a_value_it_cannot_render_identically.main()
+    reused_program_io_isolates_each_successful_execution.main()
+    selected_string_helpers_execute_from_checked_operations.main()
+    short_writes_preserve_output_and_identity.main()
+    split_default_separator_on_a_parameter.main()
+    still_refuses_iteration_over_an_unrepresentable_element.main()

@@ -1,0 +1,95 @@
+# behavior: 12 former execution collections cases run in order, each program from its own module: list_argument_order_and_iterator_aliases_match_native, parity_iterate_a_range_bound_to_a_local, parity_list_and_dict_literal_spreads, parity_list_and_dict_membership, parity_list_concatenation, parity_mut_list_parameter_written_then_read_into_a_tuple, preserves_same_spelled_source_enumerate_and_zip_functions, preserves_source_defined_zip_over_the_global_builtin_spelling, projected_nested_structural_lists_match_native, range_expression_argument, zip_alias_and_original_each_match_native, zip_equal_unequal_and_empty_lists_match_native
+# expect-stdout:
+#  left
+#  left
+#  right
+#  pair
+#  pair
+#  58
+#  left
+#  right
+#  pair
+#  10
+#  4
+#  1 7 1 9
+#  2
+#  45
+#  4
+#  2
+#  true
+#  true
+#  true
+#  true
+#  false
+#  true
+#  2
+#  [1, 2, 3]
+#  42
+#  source enumerate
+#  source zip
+#  42
+#  source zip
+#  42
+#  one
+#  two
+#  13
+#  start
+#  end
+#  [2, 3, 4]
+#  [2, 3, 4, 5]
+#  []
+#  [2, 3]
+#  [2, 3, 4]
+#  [2, 3, 4]
+#  3
+#  3
+#  6
+#  3
+#  3
+#  6
+#  6
+#  6
+#  11
+#  22
+#  33
+#  44
+#  110
+#  1
+#  one
+#  2
+#  two
+#  7
+#  seven
+#  10
+#  13
+
+"""Run the program of each former case in order."""
+
+import list_argument_order_and_iterator_aliases_match_native
+import parity_iterate_a_range_bound_to_a_local
+import parity_list_and_dict_literal_spreads
+import parity_list_and_dict_membership
+import parity_list_concatenation
+import parity_mut_list_parameter_written_then_read_into_a_tuple
+import preserves_same_spelled_source_enumerate_and_zip_functions
+import preserves_source_defined_zip_over_the_global_builtin_spelling
+import projected_nested_structural_lists_match_native
+import range_expression_argument
+import zip_alias_and_original_each_match_native
+import zip_equal_unequal_and_empty_lists_match_native
+
+
+def main() -> None:
+    """Run each former case's program in turn."""
+    list_argument_order_and_iterator_aliases_match_native.main()
+    parity_iterate_a_range_bound_to_a_local.main()
+    parity_list_and_dict_literal_spreads.main()
+    parity_list_and_dict_membership.main()
+    parity_list_concatenation.main()
+    parity_mut_list_parameter_written_then_read_into_a_tuple.main()
+    preserves_same_spelled_source_enumerate_and_zip_functions.main()
+    preserves_source_defined_zip_over_the_global_builtin_spelling.main()
+    projected_nested_structural_lists_match_native.main()
+    range_expression_argument.main()
+    zip_alias_and_original_each_match_native.main()
+    zip_equal_unequal_and_empty_lists_match_native.main()

@@ -1,0 +1,49 @@
+# Former case committed_strings_example_executes_with_ordinary_output: committed strings example executes with ordinary output
+
+"""
+String Methods in Incan
+
+This example demonstrates:
+- split() - split string into list
+- join() - join list into string
+- strip() - remove whitespace
+- upper() / lower() - case conversion
+- contains() - substring check
+- replace() - string replacement
+
+Python equivalent:
+```python
+text = "  hello, world  "
+words = text.strip().split(", ")
+upper_text = text.upper()
+```
+"""
+
+pub def main() -> None:
+    """Print `f"Original: {text}"` after preparing the fixture inputs."""
+    text = "hello, world"
+    upper_text = text.upper()
+    lower_text = text.lower()
+    println(f"Original: {text}")
+    println(f"Upper: {upper_text}")
+    println(f"Lower: {lower_text}")
+
+    csv_line = "alice,bob,carol"
+    names = csv_line.split(",")
+    first_name = names[0]
+    println(f"Split CSV: first name is {first_name}")
+
+    joined = ", ".join(names)
+    println(f"Joined: {joined}")
+
+    padded = "  hello  "
+    stripped = padded.strip()
+    println(f"Padded: '{padded}'")
+    println(f"Stripped: '{stripped}'")
+
+    sentence = "the quick brown fox"
+    has_quick = sentence.contains("quick")
+    if has_quick:
+        println("Sentence contains 'quick'")
+    replaced = sentence.replace("fox", "dog")
+    println(f"Replaced: {replaced}")

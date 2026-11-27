@@ -1,0 +1,19 @@
+# Former case refuses_a_nominal_pattern_after_its_exact_target_identity_is_removed: refuses a nominal pattern after its exact target identity is removed
+
+"""Refuses a nominal pattern after its exact target identity is removed."""
+model Point:
+  """Hold x used by this fixture."""
+  x: int
+
+def program_result() -> int:
+  """Choose the result by matching `point`."""
+  point = Point(x=42)
+  match point:
+    case Point(x=value):
+      return value
+  return 0
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

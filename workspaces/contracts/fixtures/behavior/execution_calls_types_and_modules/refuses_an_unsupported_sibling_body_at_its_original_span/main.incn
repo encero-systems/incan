@@ -1,0 +1,42 @@
+# behavior: 7 former execution calls types and modules cases run in order, each program from its own module: refuses_an_unsupported_sibling_body_at_its_original_span, refuses_typed_empty_non_structural_default_inside_a_partial_closure, refuses_unsupported_or_malformed_targets_at_a_trusted_span_before_effe, result_routing_through_try_and_match, resumes_a_generator_function_without_replaying_its_prefix, source_defined_isinstance_keeps_its_direct_callable_identity_explicit_probe, static_method_calls_with_named_arguments
+# expect-stdout:
+#  42
+#  1
+#  must not run
+#  true
+#  2
+#  0
+#  42
+#  2
+#  2
+#  2
+#  2
+#  key
+#  control
+#  nested
+#  123
+#  true
+#  false
+#  true
+#  34
+
+"""Run the program of each former case in order."""
+
+import refuses_an_unsupported_sibling_body_at_its_original_span
+import refuses_typed_empty_non_structural_default_inside_a_partial_closure
+import refuses_unsupported_or_malformed_targets_at_a_trusted_span_before_effe
+import result_routing_through_try_and_match
+import resumes_a_generator_function_without_replaying_its_prefix
+import source_defined_isinstance_keeps_its_direct_callable_identity_explicit_probe
+import static_method_calls_with_named_arguments
+
+
+def main() -> None:
+    """Run each former case's program in turn."""
+    refuses_an_unsupported_sibling_body_at_its_original_span.main()
+    refuses_typed_empty_non_structural_default_inside_a_partial_closure.main()
+    refuses_unsupported_or_malformed_targets_at_a_trusted_span_before_effe.main()
+    result_routing_through_try_and_match.main()
+    resumes_a_generator_function_without_replaying_its_prefix.main()
+    source_defined_isinstance_keeps_its_direct_callable_identity_explicit_probe.main()
+    static_method_calls_with_named_arguments.main()

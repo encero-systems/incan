@@ -1,0 +1,11 @@
+# Former case parity_builtin_reached_through_std_builtins_beside_a_shadow: a module `len` shadows the builtin, which stays reachable as `std.builtins.len` (parity corpus identity row)
+
+"""A module `len` shadows the builtin, which stays reachable as `std.builtins.len` (parity corpus identity row)."""
+def len(value: int) -> int:
+    """Return the fixture expression `value + 1`."""
+    return value + 1
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(len(4) + std.builtins.len([1, 2, 3]))

@@ -1,0 +1,16 @@
+# Former case typed_resize_methods_stay_named_non_green_under_issue_988: typed resizing uses its expected destination or an explicit policy-bearing destination, including int to i32 and u64
+
+"""Resize integers through explicit destination and overflow policies."""
+def program_result() -> i8:
+    """Clamp a wide integer to the function's declared destination type."""
+    println("must-not-print")
+    wide: i16 = 240
+    return wide.saturating_resize()
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())
+    value: int = 42
+    println(value.wrapping_resize[i32]())
+    println(value.try_resize[u64]())

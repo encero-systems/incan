@@ -1,0 +1,14 @@
+# Former case parity_model_built_with_keywords_and_a_default: a model built with keyword arguments out of order reads its fields (parity corpus case 8)
+
+"""A model built with keyword arguments out of order reads its fields (parity corpus case 8)."""
+model Point:
+    """Hold x and y used by this fixture."""
+    x: int
+    y: int = 5
+
+
+pub def main() -> None:
+    """Print `p.x` after preparing the fixture inputs."""
+    p = Point(y=2, x=1)
+    println(p.x)
+    println(p.y)

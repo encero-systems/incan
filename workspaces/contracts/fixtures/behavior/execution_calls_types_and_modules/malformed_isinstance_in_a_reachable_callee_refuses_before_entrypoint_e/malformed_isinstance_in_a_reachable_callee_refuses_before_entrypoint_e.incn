@@ -1,0 +1,16 @@
+# Former case malformed_isinstance_in_a_reachable_callee_refuses_before_entrypoint_e: malformed isinstance in a reachable callee refuses before entrypoint effects
+
+"""Malformed isinstance in a reachable callee refuses before entrypoint effects."""
+def broken(value: int | str) -> bool:
+  """Return the fixture expression `isinstance(value, int)`."""
+  return isinstance(value, int)
+
+def probe() -> bool:
+  """Emit the pre-check marker before testing the value."""
+  println("must not run")
+  return broken(1)
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(probe())

@@ -1,0 +1,15 @@
+# Former case parity_return_from_a_tuple_destructuring_loop: a for loop destructuring tuples returns from its body (parity corpus row replacement-body-v0-006)
+
+"""A for loop destructuring tuples returns from its body (parity corpus row replacement-body-v0-006)."""
+def select_second_pair() -> int:
+    """Return the encoded pair selected during tuple iteration."""
+    pairs = [(1, 2), (4, 5)]
+    for a, b in pairs:
+        if a == 4:
+            return a * 10 + b
+    return 0
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(select_second_pair())

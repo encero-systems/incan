@@ -1,0 +1,11 @@
+# Former case integer_power: `**` between ints is integer exponentiation
+
+"""`**` between ints is integer exponentiation."""
+def program_result() -> int:
+    """Return the fixture expression `2 ** 3`."""
+    return 2 ** 3
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

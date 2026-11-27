@@ -1,0 +1,11 @@
+# Former case refuses_json_stringify_outside_the_scalar_domain_at_the_call_span: refuses json stringify outside the scalar domain at the call span
+
+"""Refuses json stringify outside the scalar domain at the call span."""
+def program_result() -> str:
+  """Return the fixture expression `json_stringify([1, 2])`."""
+  return json_stringify([1, 2])
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(program_result())

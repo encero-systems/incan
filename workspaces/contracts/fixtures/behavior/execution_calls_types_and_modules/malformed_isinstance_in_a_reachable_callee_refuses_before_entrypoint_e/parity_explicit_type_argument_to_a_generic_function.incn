@@ -1,0 +1,11 @@
+# Former case parity_explicit_type_argument_to_a_generic_function: a generic function called with an explicit type argument (parity corpus identity row)
+
+"""A generic function called with an explicit type argument (parity corpus identity row)."""
+def generic_identity[T](value: T) -> T:
+    """Return `value` for this fixture."""
+    return value
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(generic_identity[int](42))

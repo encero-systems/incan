@@ -1,0 +1,24 @@
+# Former case string_len_matches_the_receipt_backed_native_route: string len matches the receipt backed native route
+
+"""Prove Unicode-scalar string length across global and method spellings."""
+
+
+def string_len() -> bool:
+    """Check empty, ASCII, precomposed, astral, and decomposed strings while emitting one comparison line."""
+    assert len("") == 0
+    assert len("abc") == 3
+    assert len("é") == 1
+    assert len("😀") == 1
+    assert len("é") == 2
+    assert "".len() == 0
+    assert "abc".len() == 3
+    assert "é".len() == 1
+    assert "😀".len() == 1
+    assert "é".len() == 2
+    println("string len")
+    return true
+
+
+pub def main() -> None:
+    """Print the fixture values in the expected order."""
+    println(string_len())
