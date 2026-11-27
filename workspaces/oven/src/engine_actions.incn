@@ -167,7 +167,7 @@ def settled_request(
             if let Some(warnings) = take(produced.prepared_warnings):
                 warning_claim = Some(warnings.claim)
                 group.append(warnings.transaction)
-            if pending.proofs:
+            if pending.proofs and produced.incomplete_provider_proof == "":
                 group.append(prepare_report(admission, run, counters, produced)?)
                 observation = run
             if len(group) == 0:
@@ -200,6 +200,7 @@ def settled_request(
                     ),
                     console=produced.console,
                     pin=Some(pin),
+                    incomplete_proof=produced.incomplete_provider_proof,
                 ),
             )
 

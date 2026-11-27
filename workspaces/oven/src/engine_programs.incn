@@ -58,6 +58,7 @@ from incan_units import (
     program_binary, view_executable,
 )
 from project_library import planned_program
+from provider_body_work import ProviderBodyTotal, ProviderBodyWork
 from selected_provider_call_shapes import ProviderCallShapeSelection
 from pub::incan_platform.store import (
     EXPECT_REPAIR, HOME_VIEW, PreparedPayload, Snapshot, SnapshotAdmission, Transaction, begin, commit, get, put,
@@ -115,6 +116,7 @@ pub model ProgramOutcome:
     pub unit: Option[NativeUnit] = None
     pub evaluations: int = 0
     pub body_evaluations: int = 0
+    pub incomplete_provider_proof: str = ""
     # Checked bodies the compiler restored from the request view's records instead of checking them, as it reports.
     pub body_reuses: int = 0
     # Checked-body pages the request selected, encoded and wrote; and restored pages the compiler had to decode.
@@ -195,6 +197,7 @@ pub model PreparedProgram:
     pub whole: str
     pub key: Option[Key] = None
     pub reach: Option[SourceGraph] = None
+    pub provider_bodies: ProviderBodyTotal = ProviderBodyTotal()
 
 
 pub model NativeSelection:
@@ -266,12 +269,14 @@ pub def check_program(
     )
 
 
-def prepared_for(view: str, described: UnitDescription, toolchain: Toolchain) -> Result[UnitDescription, str]:
+def prepared_for(
+    view: str, described: UnitDescription, toolchain: Toolchain, provider_work: Option[ProviderBodyWork] = None,
+) -> Result[UnitDescription, str]:
     """
     Prepare a request's unit. An editor's overlay request was never asked for by its user, so it is unattended: it
     stops before compile-time code that no trust entry covers, and the stop names what lacks trust (RFC 117).
     """
-    return prepare_native(described, toolchain, is_editor_view(view))
+    return prepare_native(described, toolchain, is_editor_view(view), provider_work)
 
 
 model RecordProgramRequest:
@@ -379,13 +384,17 @@ pub def obtain(
             indexed_retry = Some(unit)
     preparation = match prepared:
         Some(found) => found
-        None => prepare_program(epoch, request_view, console, selected_home, unit_options, scheduled_origin, source_readings)?
+        None => prepare_program(
+            epoch, request_view, console, selected_home, unit_options, scheduled_origin, source_readings,
+            count_providers=report_lowering,
+        )?
     ready = preparation.unit
     toolchain = preparation.toolchain
     if preparation.whole != "":
-        return whole_unit_program(
+        mut outcome = whole_unit_program(
             store, selector, ready, toolchain, console, preparation.whole, epoch_reads, view_retry, indexed_retry,
-        )
+        )?
+        return Ok(with_provider_body_work(outcome, preparation.provider_bodies))
     compiled_key = match preparation.key:
         Some(key) => key
         None => return Err("prepared records program has no unit key")
@@ -394,7 +403,16 @@ pub def obtain(
         selector=selector, console=console, epoch_reads=epoch_reads, record_writer=record_writer,
         listing_refusals=listing_refusals, report_lowering=report_lowering,
     )
-    return obtain_record_program(request, admission, previous_view, view_retry, indexed_retry, receipts)
+    mut outcome = obtain_record_program(request, admission, previous_view, view_retry, indexed_retry, receipts)?
+    return Ok(with_provider_body_work(outcome, preparation.provider_bodies))
+
+
+def with_provider_body_work(mut outcome: ProgramOutcome, providers: ProviderBodyTotal) -> ProgramOutcome:
+    """Account for current provider work once after the root outcome, including a root executable hit."""
+    bodies, incomplete = providers.with_root(outcome.body_evaluations)
+    outcome.body_evaluations = bodies
+    outcome.incomplete_provider_proof = incomplete
+    return outcome
 
 
 def manifest_free_capture(captured: Borrowed[Option[BuildEpoch]]) -> bool:
@@ -781,7 +799,7 @@ def admit_program_plans(
 
 pub def prepare_program(
     epoch: BuildEpoch, view: str, console: str, selected_home: Option[SelectedHome], unit_options: str,
-    scheduled_origin: str, source_readings: Option[Rc[Dict[str, SourceReading]]],
+    scheduled_origin: str, source_readings: Option[Rc[Dict[str, SourceReading]]], count_providers: bool = false,
 ) -> Result[PreparedProgram, str]:
     """Prepare the unit and collect its graph once under the pinned compiler and private source lease."""
     preparing = begin_work()
@@ -798,8 +816,14 @@ pub def prepare_program(
         Some(files) => planned_program(asked, false, Some(files))?
         None => asked
     shared = planned.project_library is not None
-    described, _ = prepare_project_library(planned, toolchain)?
-    ready = prepared_for(view, described, toolchain)?
+    work = match count_providers:
+        true => Some(ProviderBodyWork())
+        false => None
+    described, _ = prepare_project_library(planned, toolchain, work)?
+    ready = prepared_for(view, described, toolchain, work)?
+    provider_bodies = match work:
+        Some(providers) => providers.total()
+        None => ProviderBodyTotal()
     if ready.trust_stop != "":
         return Err(ready.trust_stop)
     mut whole = whole_unit_reason(ready, unit_options)?
@@ -807,12 +831,16 @@ pub def prepare_program(
         whole = "compiler predates typed executable graph records"
     if whole == "" and shared and ready.project_library is None:
         whole = "shared library refused"
-    if whole != "":
-        record_work(Operation.EnginePrepare, epoch.roots[0], preparing)
-        return Ok(PreparedProgram(unit=ready, toolchain=toolchain, sources=sources, whole=whole))
-    key, reach = unit_key_and_reach(ready, toolchain)?
+    mut key: Option[Key] = None
+    mut reach: Option[SourceGraph] = None
+    if whole == "":
+        keyed, graph = unit_key_and_reach(ready, toolchain)?
+        key = Some(keyed)
+        reach = graph
     record_work(Operation.EnginePrepare, epoch.roots[0], preparing)
-    return Ok(PreparedProgram(unit=ready, toolchain=toolchain, sources=sources, whole="", key=Some(key), reach=reach))
+    return Ok(PreparedProgram(
+        unit=ready, toolchain=toolchain, sources=sources, whole=whole, key=key, reach=reach, provider_bodies=provider_bodies,
+    ))
 
 
 def verify_scheduled_origin(unit: Borrowed[UnitDescription], scheduled: str) -> Result[None, str]:
