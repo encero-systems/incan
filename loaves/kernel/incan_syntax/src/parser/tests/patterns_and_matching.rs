@@ -17,317 +17,6 @@ fn require_last_source_span(source: &str, needle: &str) -> Result<Span, Vec<Comp
         })
 }
 
-#[test]
-fn test_parse_pattern_named_key_keyword() -> Result<(), Vec<CompileError>> {
-    let source = r#"
-def f(a: Foo) -> int:
-  match a:
-    Foo(type=x) => return x
-"#;
-    let program = parse_str(source)?;
-    let func = match &program.declarations[0].node {
-        Declaration::Function(func) => func,
-        _ => panic!("Expected function"),
-    };
-    let match_expr = match &func.body[0].node {
-        Statement::Expr(expr) => expr,
-        _ => panic!("Expected match expression statement"),
-    };
-    let arms = match &match_expr.node {
-        Expr::Match(_, arms) => arms,
-        _ => panic!("Expected match expression"),
-    };
-    let arm = &arms[0].node;
-    match &arm.pattern.node {
-        Pattern::Constructor(name, args) => {
-            assert_eq!(name.node, "Foo");
-            let constructor_start = require_last_source_span(source, "Foo(type")?.start;
-            assert_eq!(name.span, Span::new(constructor_start, constructor_start + 3));
-            assert!(matches!(
-                &args[0],
-                PatternArg::Named(field, pat)
-                    if field.node == "type" && matches!(&pat.node, Pattern::Binding(b) if b == "x")
-            ));
-            let PatternArg::Named(field, _) = &args[0] else {
-                unreachable!("named pattern shape was asserted above")
-            };
-            let field_start = require_source_span(source, "type=x", 0)?.start;
-            assert_eq!(field.span, Span::new(field_start, field_start + "type".len()));
-        }
-        _ => panic!("Expected constructor pattern"),
-    }
-    Ok(())
-}
-
-/// Module-qualified unit variant patterns preserve every path segment in the canonical AST spelling.
-#[test]
-fn test_parse_qualified_unit_pattern_stores_double_colon_in_ast() -> Result<(), Vec<CompileError>> {
-    let source = r#"
-def f(x: int) -> int:
-  match x:
-    shapes.Kind.Read =>
-      return 1
-"#;
-    let program = parse_str(source)?;
-    let func = match &program.declarations[0].node {
-        Declaration::Function(func) => func,
-        _ => panic!("Expected function"),
-    };
-    let match_expr = match &func.body[0].node {
-        Statement::Expr(expr) => expr,
-        _ => panic!("Expected match expression statement"),
-    };
-    let arms = match &match_expr.node {
-        Expr::Match(_, arms) => arms,
-        _ => panic!("Expected match expression"),
-    };
-    let arm = &arms[0].node;
-    match &arm.pattern.node {
-        Pattern::Constructor(name, args) => {
-            assert_eq!(name.node, "shapes::Kind::Read");
-            let start = require_source_span(source, "shapes.Kind.Read", 0)?.start;
-            assert_eq!(name.span, Span::new(start, start + "shapes.Kind.Read".len()));
-            assert!(args.is_empty());
-        }
-        _ => panic!("Expected constructor pattern"),
-    }
-
-    let errors = parse_str_err(
-        "def f(x: int) -> int:\n  match x:\n    shapes.Kind. => return 1\n",
-        "a qualified pattern ending in a dot should fail",
-    );
-    assert!(
-        errors
-            .iter()
-            .any(|error| error.message.contains("Expected variant name after '.'"))
-    );
-    Ok(())
-}
-
-#[test]
-fn test_parse_match_pattern_alternation() -> Result<(), Vec<CompileError>> {
-    let source = r#"
-def f(kind: Kind) -> int:
-  match kind:
-    Kind.Read | Kind.Scan | _ => return 1
-"#;
-    let program = parse_str(source)?;
-    let func = match &program.declarations[0].node {
-        Declaration::Function(func) => func,
-        _ => panic!("Expected function"),
-    };
-    let match_expr = match &func.body[0].node {
-        Statement::Expr(expr) => expr,
-        _ => panic!("Expected match expression statement"),
-    };
-    let arms = match &match_expr.node {
-        Expr::Match(_, arms) => arms,
-        _ => panic!("Expected match expression"),
-    };
-    match &arms[0].node.pattern.node {
-        Pattern::Or(patterns) => {
-            assert_eq!(patterns.len(), 3);
-            assert!(
-                matches!(&patterns[0].node, Pattern::Constructor(name, args) if name.node == "Kind::Read" && args.is_empty())
-            );
-            assert!(
-                matches!(&patterns[1].node, Pattern::Constructor(name, args) if name.node == "Kind::Scan" && args.is_empty())
-            );
-            assert!(matches!(&patterns[2].node, Pattern::Wildcard));
-        }
-        _ => panic!("Expected pattern alternation"),
-    }
-    Ok(())
-}
-
-#[test]
-fn test_parse_grouped_pattern_alternation() -> Result<(), Vec<CompileError>> {
-    let source = r#"
-def f(kind: Kind) -> int:
-  match kind:
-    (
-      Kind.Read
-      | Kind.Scan
-      | _
-    ) => return 1
-"#;
-    let program = parse_str(source)?;
-    let func = require_function_decl(&program.declarations[0])?;
-    let Statement::Expr(match_expr) = &func.body[0].node else {
-        panic!("Expected match expression statement");
-    };
-    let Expr::Match(_, arms) = &match_expr.node else {
-        panic!("Expected match expression");
-    };
-    match &arms[0].node.pattern.node {
-        Pattern::Group(inner) => {
-            assert!(matches!(&inner.node, Pattern::Or(patterns) if patterns.len() == 3));
-        }
-        _ => panic!("Expected grouped pattern alternation"),
-    }
-    Ok(())
-}
-
-#[test]
-fn test_parse_if_let_condition() -> Result<(), Vec<CompileError>> {
-    let source = r#"
-def f(opt: Option[int]) -> int:
-  if let Some(value) = opt:
-    return value
-  return 0
-"#;
-    let program = parse_str(source)?;
-    let func = require_function_decl(&program.declarations[0])?;
-    let stmt = &func.body[0].node;
-    let Statement::If(if_stmt) = stmt else {
-        panic!("Expected if statement");
-    };
-    match &if_stmt.condition {
-        Condition::Let { pattern, value } => {
-            assert!(matches!(&value.node, Expr::Ident(name) if name == "opt"));
-            match &pattern.node {
-                Pattern::Constructor(name, args) => {
-                    assert_eq!(name.node, "Some");
-                    assert!(matches!(
-                        &args[0],
-                        PatternArg::Positional(pat)
-                            if matches!(&pat.node, Pattern::Binding(binding) if binding == "value")
-                    ));
-                }
-                _ => panic!("Expected constructor pattern"),
-            }
-        }
-        Condition::Expr(_) => panic!("Expected let condition"),
-    }
-    Ok(())
-}
-
-#[test]
-fn test_parse_if_let_pattern_alternation() -> Result<(), Vec<CompileError>> {
-    let source = r#"
-def f(result: Result[int, int]) -> int:
-  if let Ok(value) | Err(value) = result:
-    return value
-  return 0
-"#;
-    let program = parse_str(source)?;
-    let func = require_function_decl(&program.declarations[0])?;
-    let Statement::If(if_stmt) = &func.body[0].node else {
-        panic!("Expected if statement");
-    };
-    match &if_stmt.condition {
-        Condition::Let { pattern, value } => {
-            let Expr::Ident(value_name) = &value.node else {
-                panic!("Expected identifier value");
-            };
-            assert_eq!(value_name, "result");
-            match &pattern.node {
-                Pattern::Or(patterns) => {
-                    assert_eq!(patterns.len(), 2);
-                    assert!(matches!(
-                        &patterns[0].node,
-                        Pattern::Constructor(name, args)
-                        if name.node == "Ok"
-                                && matches!(&args[0], PatternArg::Positional(pat) if matches!(&pat.node, Pattern::Binding(binding) if binding == "value"))
-                    ));
-                    assert!(matches!(
-                        &patterns[1].node,
-                        Pattern::Constructor(name, args)
-                        if name.node == "Err"
-                                && matches!(&args[0], PatternArg::Positional(pat) if matches!(&pat.node, Pattern::Binding(binding) if binding == "value"))
-                    ));
-                }
-                _ => panic!("Expected pattern alternation"),
-            }
-        }
-        Condition::Expr(_) => panic!("Expected let condition"),
-    }
-    Ok(())
-}
-
-#[test]
-fn test_parse_while_let_condition() -> Result<(), Vec<CompileError>> {
-    let source = r#"
-def drain(current: Option[int]) -> int:
-  while let Some(value) = current:
-    return value
-  return 0
-"#;
-    let program = parse_str(source)?;
-    let func = require_function_decl(&program.declarations[0])?;
-    let stmt = &func.body[0].node;
-    let Statement::While(while_stmt) = stmt else {
-        panic!("Expected while statement");
-    };
-    match &while_stmt.condition {
-        Condition::Let { pattern, value } => {
-            assert!(matches!(&value.node, Expr::Ident(name) if name == "current"));
-            assert!(matches!(
-                &pattern.node,
-                Pattern::Constructor(name, args)
-                    if name.node == "Some"
-                        && matches!(
-                            &args[0],
-                            PatternArg::Positional(pat)
-                                if matches!(&pat.node, Pattern::Binding(binding) if binding == "value")
-                        )
-            ));
-        }
-        Condition::Expr(_) => panic!("Expected let condition"),
-    }
-    Ok(())
-}
-
-#[test]
-fn test_parse_while_let_rejects_pattern_alternation() {
-    let source = r#"
-def drain(current: Result[int, int]) -> int:
-  while let Ok(value) | Err(value) = current:
-    return value
-  return 0
-"#;
-    let errors = parse_str_err(source, "`while let` pattern alternation should fail");
-    assert!(
-        errors.iter().any(|err| err
-            .message
-            .contains("Pattern alternation is only supported in match arms and if let patterns")),
-        "expected `while let` pattern alternation rejection, got: {errors:?}"
-    );
-}
-
-#[test]
-fn test_parse_if_let_rejects_else_branch() {
-    let source = r#"
-def f(opt: Option[int]) -> int:
-  if let Some(value) = opt:
-    return value
-  else:
-    return 0
-"#;
-    let errors = parse_str_err(source, "`if let` with else should fail");
-    assert!(
-        errors
-            .iter()
-            .any(|err| err.message.contains("`if let` does not support `else` branches")),
-        "expected `if let` else rejection, got: {errors:?}"
-    );
-}
-
-#[test]
-fn test_parse_match() -> Result<(), Vec<CompileError>> {
-    let source = r#"
-def handle(opt: Option[int]) -> int:
-  match opt:
-    case Some(x):
-      return x
-    case None:
-      return 0
-"#;
-    let program = parse_str(source)?;
-    assert_eq!(program.declarations.len(), 1);
-    Ok(())
-}
-
 /// Return the arms of the sole match expression in a single-function program.
 fn sole_match_arms(program: &Program) -> Result<&Vec<Spanned<MatchArm>>, String> {
     let Declaration::Function(func) = &program.declarations[0].node else {
@@ -424,146 +113,6 @@ def pick(n: int) -> str:
 }
 
 #[test]
-fn test_parse_match_fat_arrow_inline_return() -> Result<(), Vec<CompileError>> {
-    let source = r#"
-def f() -> int:
-  match Ok(1):
-    Ok(x) => return x
-    Err(_) => return 0
-"#;
-    let program = parse_str(source)?;
-    assert_eq!(program.declarations.len(), 1);
-    let func = match &program.declarations[0].node {
-        Declaration::Function(func) => func,
-        _ => panic!("Expected function declaration"),
-    };
-    assert_eq!(func.body.len(), 1);
-    let match_expr = match &func.body[0].node {
-        Statement::Expr(expr) => expr,
-        _ => panic!("Expected match expression statement"),
-    };
-    let arms = match &match_expr.node {
-        Expr::Match(_, arms) => arms,
-        _ => panic!("Expected match expression"),
-    };
-    assert_eq!(arms.len(), 2);
-    for arm in arms {
-        match &arm.node.body {
-            MatchBody::Block(stmts) => {
-                assert_eq!(stmts.len(), 1);
-                assert!(matches!(stmts[0].node, Statement::Return(_)));
-            }
-            MatchBody::Expr(_) => panic!("Expected inline return to parse as statement block"),
-        }
-    }
-    Ok(())
-}
-
-#[test]
-fn test_parse_match_fat_arrow_inline_compound_assignment() -> Result<(), Vec<CompileError>> {
-    let source = r#"
-def f() -> str:
-  mut out = ""
-  match 1:
-    1 => out += "a"
-    _ => out += "b"
-  return out
-"#;
-    let program = parse_str(source)?;
-    let func = match &program.declarations[0].node {
-        Declaration::Function(func) => func,
-        _ => panic!("Expected function declaration"),
-    };
-    assert_eq!(func.body.len(), 3);
-    let match_expr = match &func.body[1].node {
-        Statement::Expr(expr) => expr,
-        _ => panic!("Expected match expression statement"),
-    };
-    let arms = match &match_expr.node {
-        Expr::Match(_, arms) => arms,
-        _ => panic!("Expected match expression"),
-    };
-    assert_eq!(arms.len(), 2);
-    for arm in arms {
-        match &arm.node.body {
-            MatchBody::Block(stmts) => {
-                assert_eq!(stmts.len(), 1);
-                assert!(matches!(stmts[0].node, Statement::CompoundAssignment(_)));
-            }
-            MatchBody::Expr(_) => panic!("Expected inline compound assignment to parse as statement block"),
-        }
-    }
-    Ok(())
-}
-
-#[test]
-fn test_parse_match_fat_arrow_block_allows_blank_before_body() -> Result<(), Vec<CompileError>> {
-    let source = r#"
-def f() -> int:
-  match Err("bad"):
-    Ok(x) =>
-      return x
-    Err(err) =>
-
-      return 0
-"#;
-    let program = parse_str(source)?;
-    let func = match &program.declarations[0].node {
-        Declaration::Function(func) => func,
-        _ => panic!("Expected function declaration"),
-    };
-    let match_expr = match &func.body[0].node {
-        Statement::Expr(expr) => expr,
-        _ => panic!("Expected match expression statement"),
-    };
-    let arms = match &match_expr.node {
-        Expr::Match(_, arms) => arms,
-        _ => panic!("Expected match expression"),
-    };
-    assert_eq!(arms.len(), 2);
-    assert!(matches!(arms[1].node.body, MatchBody::Block(ref stmts) if stmts.len() == 1));
-    Ok(())
-}
-
-#[test]
-fn test_parse_match_arm_suite_does_not_inherit_outer_blank_line_intent() -> Result<(), Vec<CompileError>> {
-    let source = r#"
-def f(result: Result[int, str]) -> int:
-  match result:
-    Ok(value) => match value:
-      Ready(x) => return x
-
-      Failed(err) => return 0
-
-    Err(err) =>
-      return 1
-"#;
-    let program = parse_str(source)?;
-    let func = match &program.declarations[0].node {
-        Declaration::Function(func) => func,
-        _ => panic!("Expected function declaration"),
-    };
-    let match_expr = match &func.body[0].node {
-        Statement::Expr(expr) => expr,
-        _ => panic!("Expected match expression statement"),
-    };
-    let arms = match &match_expr.node {
-        Expr::Match(_, arms) => arms,
-        _ => panic!("Expected match expression"),
-    };
-    let err_body = match &arms[1].node.body {
-        MatchBody::Block(stmts) => stmts,
-        _ => panic!("Expected block match body"),
-    };
-    assert_eq!(err_body.len(), 1);
-    assert_eq!(
-        err_body[0].leading_blank_lines, 0,
-        "outer Err arm body should not inherit the preserved gap from the nested Ok arm"
-    );
-    Ok(())
-}
-
-#[test]
 fn a_binding_pattern_may_be_written_mut() -> Result<(), String> {
     let source = r#"
 def f(found: Result[tuple[list[int], int], str]) -> int:
@@ -604,3 +153,470 @@ fn mut_in_a_pattern_needs_a_plain_name() {
         assert!(!errors.is_empty(), "expected `{pattern}` to be refused");
     }
 }
+
+#[test]
+fn pattern_parse_cases() {
+    run_parse_cases(PATTERN_PARSE_CASES);
+}
+
+const PATTERN_PARSE_CASES: &[ParseCase] = &[
+    ParseCase {
+        name: "test_parse_pattern_named_key_keyword",
+        source: r#"
+def f(a: Foo) -> int:
+  match a:
+    Foo(type=x) => return x
+"#,
+        check: |source, program| {
+            let func = match &program.declarations[0].node {
+                Declaration::Function(func) => func,
+                _ => panic!("Expected function"),
+            };
+            let match_expr = match &func.body[0].node {
+                Statement::Expr(expr) => expr,
+                _ => panic!("Expected match expression statement"),
+            };
+            let arms = match &match_expr.node {
+                Expr::Match(_, arms) => arms,
+                _ => panic!("Expected match expression"),
+            };
+            let arm = &arms[0].node;
+            match &arm.pattern.node {
+                Pattern::Constructor(name, args) => {
+                    assert_eq!(name.node, "Foo");
+                    let constructor_start = require_last_source_span(source, "Foo(type")?.start;
+                    assert_eq!(name.span, Span::new(constructor_start, constructor_start + 3));
+                    assert!(matches!(
+                        &args[0],
+                        PatternArg::Named(field, pat)
+                            if field.node == "type" && matches!(&pat.node, Pattern::Binding(b) if b == "x")
+                    ));
+                    let PatternArg::Named(field, _) = &args[0] else {
+                        unreachable!("named pattern shape was asserted above")
+                    };
+                    let field_start = require_source_span(source, "type=x", 0)?.start;
+                    assert_eq!(field.span, Span::new(field_start, field_start + "type".len()));
+                }
+                _ => panic!("Expected constructor pattern"),
+            }
+            Ok(())
+        },
+    },
+    // Module-qualified unit variant patterns preserve every path segment in the canonical AST spelling.
+    ParseCase {
+        name: "test_parse_qualified_unit_pattern_stores_double_colon_in_ast",
+        source: r#"
+def f(x: int) -> int:
+  match x:
+    shapes.Kind.Read =>
+      return 1
+"#,
+        check: |source, program| {
+            let func = match &program.declarations[0].node {
+                Declaration::Function(func) => func,
+                _ => panic!("Expected function"),
+            };
+            let match_expr = match &func.body[0].node {
+                Statement::Expr(expr) => expr,
+                _ => panic!("Expected match expression statement"),
+            };
+            let arms = match &match_expr.node {
+                Expr::Match(_, arms) => arms,
+                _ => panic!("Expected match expression"),
+            };
+            let arm = &arms[0].node;
+            match &arm.pattern.node {
+                Pattern::Constructor(name, args) => {
+                    assert_eq!(name.node, "shapes::Kind::Read");
+                    let start = require_source_span(source, "shapes.Kind.Read", 0)?.start;
+                    assert_eq!(name.span, Span::new(start, start + "shapes.Kind.Read".len()));
+                    assert!(args.is_empty());
+                }
+                _ => panic!("Expected constructor pattern"),
+            }
+
+            let errors = parse_str_err(
+                "def f(x: int) -> int:\n  match x:\n    shapes.Kind. => return 1\n",
+                "a qualified pattern ending in a dot should fail",
+            );
+            assert!(
+                errors
+                    .iter()
+                    .any(|error| error.message.contains("Expected variant name after '.'"))
+            );
+            Ok(())
+        },
+    },
+    ParseCase {
+        name: "test_parse_match_pattern_alternation",
+        source: r#"
+def f(kind: Kind) -> int:
+  match kind:
+    Kind.Read | Kind.Scan | _ => return 1
+"#,
+        check: |_source, program| {
+            let func = match &program.declarations[0].node {
+                Declaration::Function(func) => func,
+                _ => panic!("Expected function"),
+            };
+            let match_expr = match &func.body[0].node {
+                Statement::Expr(expr) => expr,
+                _ => panic!("Expected match expression statement"),
+            };
+            let arms = match &match_expr.node {
+                Expr::Match(_, arms) => arms,
+                _ => panic!("Expected match expression"),
+            };
+            match &arms[0].node.pattern.node {
+                Pattern::Or(patterns) => {
+                    assert_eq!(patterns.len(), 3);
+                    assert!(
+                        matches!(&patterns[0].node, Pattern::Constructor(name, args) if name.node == "Kind::Read" && args.is_empty())
+                    );
+                    assert!(
+                        matches!(&patterns[1].node, Pattern::Constructor(name, args) if name.node == "Kind::Scan" && args.is_empty())
+                    );
+                    assert!(matches!(&patterns[2].node, Pattern::Wildcard));
+                }
+                _ => panic!("Expected pattern alternation"),
+            }
+            Ok(())
+        },
+    },
+    ParseCase {
+        name: "test_parse_grouped_pattern_alternation",
+        source: r#"
+def f(kind: Kind) -> int:
+  match kind:
+    (
+      Kind.Read
+      | Kind.Scan
+      | _
+    ) => return 1
+"#,
+        check: |_source, program| {
+            let func = require_function_decl(&program.declarations[0])?;
+            let Statement::Expr(match_expr) = &func.body[0].node else {
+                panic!("Expected match expression statement");
+            };
+            let Expr::Match(_, arms) = &match_expr.node else {
+                panic!("Expected match expression");
+            };
+            match &arms[0].node.pattern.node {
+                Pattern::Group(inner) => {
+                    assert!(matches!(&inner.node, Pattern::Or(patterns) if patterns.len() == 3));
+                }
+                _ => panic!("Expected grouped pattern alternation"),
+            }
+            Ok(())
+        },
+    },
+    ParseCase {
+        name: "test_parse_if_let_condition",
+        source: r#"
+def f(opt: Option[int]) -> int:
+  if let Some(value) = opt:
+    return value
+  return 0
+"#,
+        check: |_source, program| {
+            let func = require_function_decl(&program.declarations[0])?;
+            let stmt = &func.body[0].node;
+            let Statement::If(if_stmt) = stmt else {
+                panic!("Expected if statement");
+            };
+            match &if_stmt.condition {
+                Condition::Let { pattern, value } => {
+                    assert!(matches!(&value.node, Expr::Ident(name) if name == "opt"));
+                    match &pattern.node {
+                        Pattern::Constructor(name, args) => {
+                            assert_eq!(name.node, "Some");
+                            assert!(matches!(
+                                &args[0],
+                                PatternArg::Positional(pat)
+                                    if matches!(&pat.node, Pattern::Binding(binding) if binding == "value")
+                            ));
+                        }
+                        _ => panic!("Expected constructor pattern"),
+                    }
+                }
+                Condition::Expr(_) => panic!("Expected let condition"),
+            }
+            Ok(())
+        },
+    },
+    ParseCase {
+        name: "test_parse_if_let_pattern_alternation",
+        source: r#"
+def f(result: Result[int, int]) -> int:
+  if let Ok(value) | Err(value) = result:
+    return value
+  return 0
+"#,
+        check: |_source, program| {
+            let func = require_function_decl(&program.declarations[0])?;
+            let Statement::If(if_stmt) = &func.body[0].node else {
+                panic!("Expected if statement");
+            };
+            match &if_stmt.condition {
+                Condition::Let { pattern, value } => {
+                    let Expr::Ident(value_name) = &value.node else {
+                        panic!("Expected identifier value");
+                    };
+                    assert_eq!(value_name, "result");
+                    match &pattern.node {
+                        Pattern::Or(patterns) => {
+                            assert_eq!(patterns.len(), 2);
+                            assert!(matches!(
+                                &patterns[0].node,
+                                Pattern::Constructor(name, args)
+                                if name.node == "Ok"
+                                        && matches!(&args[0], PatternArg::Positional(pat) if matches!(&pat.node, Pattern::Binding(binding) if binding == "value"))
+                            ));
+                            assert!(matches!(
+                                &patterns[1].node,
+                                Pattern::Constructor(name, args)
+                                if name.node == "Err"
+                                        && matches!(&args[0], PatternArg::Positional(pat) if matches!(&pat.node, Pattern::Binding(binding) if binding == "value"))
+                            ));
+                        }
+                        _ => panic!("Expected pattern alternation"),
+                    }
+                }
+                Condition::Expr(_) => panic!("Expected let condition"),
+            }
+            Ok(())
+        },
+    },
+    ParseCase {
+        name: "test_parse_while_let_condition",
+        source: r#"
+def drain(current: Option[int]) -> int:
+  while let Some(value) = current:
+    return value
+  return 0
+"#,
+        check: |_source, program| {
+            let func = require_function_decl(&program.declarations[0])?;
+            let stmt = &func.body[0].node;
+            let Statement::While(while_stmt) = stmt else {
+                panic!("Expected while statement");
+            };
+            match &while_stmt.condition {
+                Condition::Let { pattern, value } => {
+                    assert!(matches!(&value.node, Expr::Ident(name) if name == "current"));
+                    assert!(matches!(
+                        &pattern.node,
+                        Pattern::Constructor(name, args)
+                            if name.node == "Some"
+                                && matches!(
+                                    &args[0],
+                                    PatternArg::Positional(pat)
+                                        if matches!(&pat.node, Pattern::Binding(binding) if binding == "value")
+                                )
+                    ));
+                }
+                Condition::Expr(_) => panic!("Expected let condition"),
+            }
+            Ok(())
+        },
+    },
+    ParseCase {
+        name: "test_parse_match",
+        source: r#"
+def handle(opt: Option[int]) -> int:
+  match opt:
+    case Some(x):
+      return x
+    case None:
+      return 0
+"#,
+        check: |_source, program| {
+            assert_eq!(program.declarations.len(), 1);
+            Ok(())
+        },
+    },
+    ParseCase {
+        name: "test_parse_match_fat_arrow_inline_return",
+        source: r#"
+def f() -> int:
+  match Ok(1):
+    Ok(x) => return x
+    Err(_) => return 0
+"#,
+        check: |_source, program| {
+            assert_eq!(program.declarations.len(), 1);
+            let func = match &program.declarations[0].node {
+                Declaration::Function(func) => func,
+                _ => panic!("Expected function declaration"),
+            };
+            assert_eq!(func.body.len(), 1);
+            let match_expr = match &func.body[0].node {
+                Statement::Expr(expr) => expr,
+                _ => panic!("Expected match expression statement"),
+            };
+            let arms = match &match_expr.node {
+                Expr::Match(_, arms) => arms,
+                _ => panic!("Expected match expression"),
+            };
+            assert_eq!(arms.len(), 2);
+            for arm in arms {
+                match &arm.node.body {
+                    MatchBody::Block(stmts) => {
+                        assert_eq!(stmts.len(), 1);
+                        assert!(matches!(stmts[0].node, Statement::Return(_)));
+                    }
+                    MatchBody::Expr(_) => panic!("Expected inline return to parse as statement block"),
+                }
+            }
+            Ok(())
+        },
+    },
+    ParseCase {
+        name: "test_parse_match_fat_arrow_inline_compound_assignment",
+        source: r#"
+def f() -> str:
+  mut out = ""
+  match 1:
+    1 => out += "a"
+    _ => out += "b"
+  return out
+"#,
+        check: |_source, program| {
+            let func = match &program.declarations[0].node {
+                Declaration::Function(func) => func,
+                _ => panic!("Expected function declaration"),
+            };
+            assert_eq!(func.body.len(), 3);
+            let match_expr = match &func.body[1].node {
+                Statement::Expr(expr) => expr,
+                _ => panic!("Expected match expression statement"),
+            };
+            let arms = match &match_expr.node {
+                Expr::Match(_, arms) => arms,
+                _ => panic!("Expected match expression"),
+            };
+            assert_eq!(arms.len(), 2);
+            for arm in arms {
+                match &arm.node.body {
+                    MatchBody::Block(stmts) => {
+                        assert_eq!(stmts.len(), 1);
+                        assert!(matches!(stmts[0].node, Statement::CompoundAssignment(_)));
+                    }
+                    MatchBody::Expr(_) => panic!("Expected inline compound assignment to parse as statement block"),
+                }
+            }
+            Ok(())
+        },
+    },
+    ParseCase {
+        name: "test_parse_match_fat_arrow_block_allows_blank_before_body",
+        source: r#"
+def f() -> int:
+  match Err("bad"):
+    Ok(x) =>
+      return x
+    Err(err) =>
+
+      return 0
+"#,
+        check: |_source, program| {
+            let func = match &program.declarations[0].node {
+                Declaration::Function(func) => func,
+                _ => panic!("Expected function declaration"),
+            };
+            let match_expr = match &func.body[0].node {
+                Statement::Expr(expr) => expr,
+                _ => panic!("Expected match expression statement"),
+            };
+            let arms = match &match_expr.node {
+                Expr::Match(_, arms) => arms,
+                _ => panic!("Expected match expression"),
+            };
+            assert_eq!(arms.len(), 2);
+            assert!(matches!(arms[1].node.body, MatchBody::Block(ref stmts) if stmts.len() == 1));
+            Ok(())
+        },
+    },
+    ParseCase {
+        name: "test_parse_match_arm_suite_does_not_inherit_outer_blank_line_intent",
+        source: r#"
+def f(result: Result[int, str]) -> int:
+  match result:
+    Ok(value) => match value:
+      Ready(x) => return x
+
+      Failed(err) => return 0
+
+    Err(err) =>
+      return 1
+"#,
+        check: |_source, program| {
+            let func = match &program.declarations[0].node {
+                Declaration::Function(func) => func,
+                _ => panic!("Expected function declaration"),
+            };
+            let match_expr = match &func.body[0].node {
+                Statement::Expr(expr) => expr,
+                _ => panic!("Expected match expression statement"),
+            };
+            let arms = match &match_expr.node {
+                Expr::Match(_, arms) => arms,
+                _ => panic!("Expected match expression"),
+            };
+            let err_body = match &arms[1].node.body {
+                MatchBody::Block(stmts) => stmts,
+                _ => panic!("Expected block match body"),
+            };
+            assert_eq!(err_body.len(), 1);
+            assert_eq!(
+                err_body[0].leading_blank_lines, 0,
+                "outer Err arm body should not inherit the preserved gap from the nested Ok arm"
+            );
+            Ok(())
+        },
+    },
+];
+
+#[test]
+fn pattern_refusal_cases() {
+    run_refusal_cases(PATTERN_REFUSAL_CASES);
+}
+
+const PATTERN_REFUSAL_CASES: &[RefusalCase] = &[
+    RefusalCase {
+        name: "test_parse_while_let_rejects_pattern_alternation",
+        source: r#"
+def drain(current: Result[int, int]) -> int:
+  while let Ok(value) | Err(value) = current:
+    return value
+  return 0
+"#,
+        check: |_source, errors| {
+            assert!(
+                errors.iter().any(|err| err
+                    .message
+                    .contains("Pattern alternation is only supported in match arms and if let patterns")),
+                "expected `while let` pattern alternation rejection, got: {errors:?}"
+            );
+        },
+    },
+    RefusalCase {
+        name: "test_parse_if_let_rejects_else_branch",
+        source: r#"
+def f(opt: Option[int]) -> int:
+  if let Some(value) = opt:
+    return value
+  else:
+    return 0
+"#,
+        check: |_source, errors| {
+            assert!(
+                errors
+                    .iter()
+                    .any(|err| err.message.contains("`if let` does not support `else` branches")),
+                "expected `if let` else rejection, got: {errors:?}"
+            );
+        },
+    },
+];
