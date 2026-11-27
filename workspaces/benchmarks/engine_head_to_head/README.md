@@ -34,4 +34,4 @@ Run every command under the host's resource lease, with `INCAN_HOME` set to the 
 | `samples.jsonl` | Every observation in order: arm, pair, position, engine, stage, state, role, argv, environment overrides, exit, signal, stdout and stderr digests, and in timed runs wall time, first output and host samples |
 | `failures.jsonl` | The first refused command of each failed arm, with its evidence |
 | `result.json` | Each arm's terminal result and whether the home's own Bakery stayed unchanged |
-| `summary.json`, `summary.md` | Medians, quartiles, minimum and maximum per series, and p95 from 20 samples |
+| `summary.json`, `summary.md` | Medians, quartiles, minimum and maximum per series (arm, stage, state, role, engine and jobs), and p95 from 20 samples. `run.rb summarize OUTPUT` writes them again from the samples. |

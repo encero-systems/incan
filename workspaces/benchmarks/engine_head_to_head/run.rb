@@ -6,6 +6,7 @@
 #          --prefill BAKERY --prefill-receipt RECEIPT --cache-note TEXT [--arms hello,two-homes,graph-lsp,census]
 #          [--contracts-runner RUNNER --oracle VERDICTS] [--slots PAR_SLOT_DIRECTORY] [--pairs N] [--census-pairs N]
 #          [--census-jobs 5,12] [--census-states cold,warm] [--retire-trees]
+#   run.rb summarize OUTPUT
 #
 # Run under par.rb: the installed home is INCAN_HOME, and INCAN must be its launcher.
 require 'optparse'
@@ -171,7 +172,10 @@ module HeadToHead
       Pins.seal_prefill(arguments[0], arguments[1], installed_home)
     when 'build-runner' then build_runner(arguments)
     when 'compare' then compare(arguments)
-    else refuse('usage: run.rb seal-prefill|build-runner|compare ...')
+    when 'summarize'
+      refuse('usage: run.rb summarize OUTPUT') unless arguments.size == 1
+      Summary.write(File.realpath(arguments[0]))
+    else refuse('usage: run.rb seal-prefill|build-runner|compare|summarize ...')
     end
   rescue Refusal => refusal
     warn refusal.message

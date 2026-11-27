@@ -13,19 +13,20 @@ module HeadToHead
         q1: HeadToHead.percentile(values, 0.25), q3: HeadToHead.percentile(values, 0.75), samples: values }
     end
 
-    # One series per arm, stage, role, engine and census jobs setting; LSP sessions add one series per protocol mark.
+    # One series per arm, stage, state, role, engine and census jobs setting, so a fresh recomputation never joins
+    # its warm edit; LSP sessions add one series per protocol mark.
     def self.series(samples)
       grouped = Hash.new { |hash, key| hash[key] = [] }
       samples.each do |sample|
         next unless sample['timed'] && %w[ordinary native-control].include?(sample['role'])
 
-        key = [sample['arm'], sample['stage'], sample['role'], sample['engine'], sample['jobs']]
+        key = sample.values_at('arm', 'stage', 'state', 'role', 'engine', 'jobs')
         grouped[key] << sample['wall_ms'] if sample['wall_ms']
         (sample['marks_ms'] || {}).each { |mark, value| grouped[key + [mark]] << value }
       end
       grouped.map do |key, values|
-        arm, stage, role, engine, jobs, mark = key
-        { arm: arm, stage: stage, role: role, engine: engine, jobs: jobs, mark: mark }.compact
+        arm, stage, state, role, engine, jobs, mark = key
+        { arm: arm, stage: stage, state: state, role: role, engine: engine, jobs: jobs, mark: mark }.compact
           .merge(milliseconds: statistics(values))
       end
     end
@@ -49,11 +50,11 @@ module HeadToHead
       rows = summary.fetch(:series).map do |row|
         stats = row.fetch(:milliseconds)
         p95 = stats.fetch(:p95) ? format('%.1f', stats.fetch(:p95)) : 'n<20'
-        "| #{row.values_at(:arm, :stage, :role, :engine, :jobs, :mark).map { |value| value || '' }.join(' | ')} | " \
+        "| #{row.values_at(:arm, :stage, :state, :role, :engine, :jobs, :mark).map { |value| value || '' }.join(' | ')} | " \
           "#{stats.fetch(:n)} | #{format('%.1f', stats.fetch(:median))} | #{p95} | #{format('%.1f', stats.fetch(:min))} | #{format('%.1f', stats.fetch(:max))} |"
       end
-      header = "| Arm | Stage | Role | Engine | Jobs | Mark | n | Median ms | p95 ms | Min ms | Max ms |\n" \
-               "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n"
+      header = "| Arm | Stage | State | Role | Engine | Jobs | Mark | n | Median ms | p95 ms | Min ms | Max ms |\n" \
+               "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n"
       failures = summary.fetch(:failures).map { |failure| "- #{failure.fetch('arm')}: #{failure.fetch('refusal')}" }
       "# Engine head-to-head summary\n\n#{header}#{rows.join("\n")}\n\n" \
         "Failures: #{failures.empty? ? 'none' : "\n#{failures.join("\n")}"}\n"
