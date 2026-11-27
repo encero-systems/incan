@@ -636,7 +636,7 @@ fn failure(error: impl std::fmt::Display) -> CliError {
 
 #[cfg(test)]
 mod tests {
-    use crate::test_rows::{MutRow, run_mut_rows};
+    use crate::test_rows::{MutRow, run_rows};
     use std::collections::BTreeSet;
     use std::fs;
     use std::io::Write;
@@ -722,9 +722,14 @@ mod tests {
 
     #[test]
     fn rust_abi_tempdir_cases() {
-        run_mut_rows(RUST_ABI_TEMPDIR_CASES, || {
-            tempfile::tempdir().expect("temporary directory")
-        });
+        run_rows(
+            RUST_ABI_TEMPDIR_CASES,
+            |row| row.name,
+            |row| {
+                let root = tempfile::tempdir().map_err(|error| format!("create temporary directory: {error}"))?;
+                (row.check)(root).map_err(|error| format!("{error:?}"))
+            },
+        );
     }
 
     const RUST_ABI_TEMPDIR_CASES: &[MutRow<tempfile::TempDir, Box<dyn std::error::Error>>] = &[

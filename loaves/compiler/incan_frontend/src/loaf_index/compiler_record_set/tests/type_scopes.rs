@@ -12,7 +12,7 @@ use crate::api_metadata::{
 use crate::library_manifest::LibraryManifest;
 use crate::library_manifest::compiler_records::RecordFamily;
 use crate::loaf_index::LoafIndex;
-use crate::test_rows::{MutRow, run_mut_rows};
+use crate::test_rows::{MutRow, run_rows};
 
 /// The record family of a module's type scope.
 const TYPE_SCOPE: &str = "type-scope";
@@ -159,9 +159,14 @@ fn a_standard_packages_type_scope_follows_its_std_spellings() -> Result<(), Box<
 
 #[test]
 fn type_scopes_tempdir_cases() {
-    run_mut_rows(TYPE_SCOPES_TEMPDIR_CASES, || {
-        tempfile::tempdir().expect("temporary directory")
-    });
+    run_rows(
+        TYPE_SCOPES_TEMPDIR_CASES,
+        |row| row.name,
+        |row| {
+            let root = tempfile::tempdir().map_err(|error| format!("create temporary directory: {error}"))?;
+            (row.check)(root).map_err(|error| format!("{error:?}"))
+        },
+    );
 }
 
 const TYPE_SCOPES_TEMPDIR_CASES: &[MutRow<tempfile::TempDir, Box<dyn std::error::Error>>] = &[

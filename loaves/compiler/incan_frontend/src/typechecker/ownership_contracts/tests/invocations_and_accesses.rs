@@ -1,8 +1,7 @@
 //! Invocation projection, argument evaluation order, source accesses, copy evidence and transfer inventories.
 
 use super::*;
-use crate::test_rows::{SourceMutRow, run_source_mut_rows};
-use crate::test_rows::{SourceRow, run_source_rows};
+use crate::test_rows::{SourceMutRow, SourceRow, run_rows, run_source_rows};
 
 /// Owned calls transfer even when the callee only compares the value; a later caller use is a source conflict.
 #[test]
@@ -544,7 +543,14 @@ const INVOCATIONS_AND_ACCESSES_CHECKED_CASES: &[SourceRow<TypeChecker>] = &[
 
 #[test]
 fn mutable_checked_cases() {
-    run_source_mut_rows(MUTABLE_CHECKED_CASES, |source| checked(source).expect("checked"));
+    run_rows(
+        MUTABLE_CHECKED_CASES,
+        |row| row.name,
+        |row| {
+            let checker = checked(row.source).map_err(|error| format!("check fixture source: {error}"))?;
+            (row.check)(row.source, checker).map_err(|error| format!("{error:?}"))
+        },
+    );
 }
 
 const MUTABLE_CHECKED_CASES: &[SourceMutRow<TypeChecker>] = &[

@@ -1,7 +1,7 @@
 //! Source import path resolution, logical candidates and source module import classification.
 
 use super::*;
-use crate::test_rows::{MutRow, run_mut_rows};
+use crate::test_rows::{MutRow, run_rows};
 
 #[test]
 fn logical_module_segments_strip_directory_entrypoint_suffixes() -> Result<(), Box<dyn std::error::Error>> {
@@ -141,9 +141,14 @@ fn stdlib_namespace_prelude_imports_depend_on_the_namespace_module_issue1561() -
 
 #[test]
 fn import_resolution_tempdir_cases() {
-    run_mut_rows(IMPORT_RESOLUTION_TEMPDIR_CASES, || {
-        tempfile::tempdir().expect("temporary directory")
-    });
+    run_rows(
+        IMPORT_RESOLUTION_TEMPDIR_CASES,
+        |row| row.name,
+        |row| {
+            let root = tempfile::tempdir().map_err(|error| format!("create temporary directory: {error}"))?;
+            (row.check)(root).map_err(|error| format!("{error:?}"))
+        },
+    );
 }
 
 const IMPORT_RESOLUTION_TEMPDIR_CASES: &[MutRow<tempfile::TempDir, Box<dyn std::error::Error>>] = &[

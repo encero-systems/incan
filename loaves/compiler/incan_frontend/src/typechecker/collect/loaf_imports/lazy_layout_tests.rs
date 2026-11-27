@@ -8,7 +8,7 @@ use std::sync::Arc;
 use super::canonical_remapping_tests::{body_ir, checker, parse};
 use super::rust_reexport_chain_tests::{TestResult, installed, published_root};
 use crate::loaf_index::LoafIndex;
-use crate::test_rows::{MutRow, run_mut_rows};
+use crate::test_rows::{MutRow, run_rows};
 use crate::typechecker::{CheckedNamespaceInterface, DependencyInterfacePreparationCache};
 
 /// A Loaf whose second model nothing names.
@@ -765,9 +765,14 @@ fn layout_difference_paths(
 
 #[test]
 fn lazy_layout_tests_tempdir_cases() {
-    run_mut_rows(LAZY_LAYOUT_TESTS_TEMPDIR_CASES, || {
-        tempfile::tempdir().expect("temporary directory")
-    });
+    run_rows(
+        LAZY_LAYOUT_TESTS_TEMPDIR_CASES,
+        |row| row.name,
+        |row| {
+            let root = tempfile::tempdir().map_err(|error| format!("create temporary directory: {error}"))?;
+            (row.check)(root).map_err(|error| format!("{error:?}"))
+        },
+    );
 }
 
 const LAZY_LAYOUT_TESTS_TEMPDIR_CASES: &[MutRow<tempfile::TempDir, Box<dyn std::error::Error>>] = &[

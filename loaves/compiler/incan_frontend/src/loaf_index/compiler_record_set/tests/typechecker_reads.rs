@@ -11,7 +11,7 @@ use crate::api_metadata::{
 use crate::library_manifest::LibraryManifest;
 use crate::library_manifest::compiler_records::RecordFamily;
 use crate::loaf_index::LoafIndex;
-use crate::test_rows::{MutRow, run_mut_rows};
+use crate::test_rows::{MutRow, run_rows};
 use crate::test_rows::{SourceRow, run_source_rows};
 
 /// How many public functions the module declares beside the one the program calls.
@@ -363,9 +363,14 @@ const TYPECHECKER_READS_PRICES_READS_CASES: &[SourceRow<Vec<String>>] = &[
 
 #[test]
 fn standard_reads_cases() {
-    run_mut_rows(STANDARD_READS_CASES, || {
-        standard_import_reads().expect("standard import reads")
-    });
+    run_rows(
+        STANDARD_READS_CASES,
+        |row| row.name,
+        |row| {
+            let reads = standard_import_reads().map_err(|error| format!("collect standard import reads: {error}"))?;
+            (row.check)(reads).map_err(|error| format!("{error:?}"))
+        },
+    );
 }
 
 const STANDARD_READS_CASES: &[MutRow<Vec<String>>] = &[

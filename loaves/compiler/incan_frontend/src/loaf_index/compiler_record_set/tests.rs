@@ -24,7 +24,7 @@ use crate::api_metadata::{
 };
 use crate::library_manifest::executable_surface::{ExecutableSurface, runtime_bindings};
 use crate::library_manifest::{ExecutableRepresentationExport, LibraryContractMetadata, LibraryManifest};
-use crate::test_rows::{MutRow, run_mut_rows};
+use crate::test_rows::{MutRow, run_rows};
 
 /// The canonical lowercase SHA-256 spelling of `bytes`.
 fn content_name(bytes: &[u8]) -> String {
@@ -347,9 +347,14 @@ fn an_aggregate_only_runtime_keeps_its_published_facade_and_native_absences() ->
 
 #[test]
 fn tests_tempdir_cases() {
-    run_mut_rows(TESTS_TEMPDIR_CASES, || {
-        tempfile::tempdir().expect("temporary directory")
-    });
+    run_rows(
+        TESTS_TEMPDIR_CASES,
+        |row| row.name,
+        |row| {
+            let root = tempfile::tempdir().map_err(|error| format!("create temporary directory: {error}"))?;
+            (row.check)(root).map_err(|error| format!("{error:?}"))
+        },
+    );
 }
 
 const TESTS_TEMPDIR_CASES: &[MutRow<tempfile::TempDir, Box<dyn std::error::Error>>] = &[
