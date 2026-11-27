@@ -688,7 +688,7 @@ def finish_native_trace(trace: Option[ReleaseTrace], span: Option[ReleaseSpan]) 
         _ => return Ok(None)
 
 
-def tool_build_plan(context: NativeContext, name: str, rebuild: bool, phase: str) -> Result[NativeBuildPlan, str]:
+pub def tool_build_plan(context: NativeContext, name: str, rebuild: bool, phase: str) -> Result[NativeBuildPlan, str]:
     """Plan one project-scale tool build whose executable is copied only after successful completion."""
     project, output, destination = tool_paths(context, name)?
     if rebuild:
