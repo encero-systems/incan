@@ -1,105 +1,7 @@
 //! Source import path resolution, logical candidates and source module import classification.
 
 use super::*;
-
-/// A caller-supplied project source root resolves imports outside a test directory.
-#[test]
-fn resolve_import_path_falls_back_to_supplied_source_root_for_tests_dir() -> Result<(), Box<dyn std::error::Error>> {
-    let tmp = tempfile::tempdir()?;
-    let root = tmp.path();
-    std::fs::write(
-        root.join("loaf.toml"),
-        r#"[project]
-name = "demo"
-version = "0.1.0"
-"#,
-    )?;
-    let tests_dir = root.join("tests");
-    let src_dir = root.join("src");
-    std::fs::create_dir_all(&tests_dir)?;
-    std::fs::create_dir_all(&src_dir)?;
-    let dataset = src_dir.join("dataset.incn");
-    std::fs::write(&dataset, "pub trait DataSet[T]:\n    pass\n")?;
-
-    let SourceModuleImportResolution::Local(resolved) =
-        resolve_source_module_import(&tests_dir, Some(&src_dir), &relative_from_import("dataset"))
-    else {
-        return Err("source-root import was not resolved locally".into());
-    };
-    assert_eq!(resolved.file_path, dataset.canonicalize()?);
-    Ok(())
-}
-
-/// A test-local module wins over a module under the caller-supplied source root.
-#[test]
-fn resolve_import_path_prefers_base_dir_before_source_root_fallback() -> Result<(), Box<dyn std::error::Error>> {
-    let tmp = tempfile::tempdir()?;
-    let root = tmp.path();
-    std::fs::write(
-        root.join("loaf.toml"),
-        r#"[project]
-name = "demo"
-version = "0.1.0"
-"#,
-    )?;
-    let tests_dir = root.join("tests");
-    let src_dir = root.join("src");
-    std::fs::create_dir_all(&tests_dir)?;
-    std::fs::create_dir_all(&src_dir)?;
-    let tests_dataset = tests_dir.join("dataset.incn");
-    let src_dataset = src_dir.join("dataset.incn");
-    std::fs::write(&tests_dataset, "pub trait LocalDataSet[T]:\n    pass\n")?;
-    std::fs::write(&src_dataset, "pub trait SourceDataSet[T]:\n    pass\n")?;
-
-    let SourceModuleImportResolution::Local(resolved) =
-        resolve_source_module_import(&tests_dir, Some(&src_dir), &relative_from_import("dataset"))
-    else {
-        return Err("test-local import was not resolved locally".into());
-    };
-    assert_eq!(resolved.file_path, tests_dataset.canonicalize()?);
-    Ok(())
-}
-
-/// Manifest orchestration supplies a nonstandard source root explicitly at the resolution boundary.
-#[test]
-fn resolve_import_path_uses_supplied_source_root_when_configured() -> Result<(), Box<dyn std::error::Error>> {
-    let tmp = tempfile::tempdir()?;
-    let root = tmp.path();
-    std::fs::write(
-        root.join("loaf.toml"),
-        r#"[project]
-name = "demo"
-version = "0.1.0"
-
-[build]
-source-root = "library"
-"#,
-    )?;
-    let tests_dir = root.join("tests");
-    let library_dir = root.join("library");
-    std::fs::create_dir_all(&tests_dir)?;
-    std::fs::create_dir_all(&library_dir)?;
-    let dataset = library_dir.join("dataset.incn");
-    std::fs::write(&dataset, "pub trait DataSet[T]:\n    pass\n")?;
-
-    let SourceModuleImportResolution::Local(resolved) =
-        resolve_source_module_import(&tests_dir, Some(&library_dir), &relative_from_import("dataset"))
-    else {
-        return Err("configured source-root import was not resolved locally".into());
-    };
-    assert_eq!(resolved.file_path, dataset.canonicalize()?);
-    let root_dataset = root.join("dataset.incn");
-    std::fs::write(&root_dataset, "pub trait RootDataSet[T]:\n    pass\n")?;
-    let mut root_import = relative_from_import("dataset");
-    if let ImportKind::From { module, .. } = &mut root_import.kind {
-        module.is_absolute = true;
-    }
-    assert_eq!(
-        resolve_import_path(&tests_dir, &root_import),
-        Some(root_dataset.canonicalize()?)
-    );
-    Ok(())
-}
+use crate::test_rows::{MutRow, run_mut_rows};
 
 #[test]
 fn logical_module_segments_strip_directory_entrypoint_suffixes() -> Result<(), Box<dyn std::error::Error>> {
@@ -238,130 +140,237 @@ fn stdlib_namespace_prelude_imports_depend_on_the_namespace_module_issue1561() -
 }
 
 #[test]
-fn resolve_source_module_import_prefers_full_module_import_path() -> Result<(), Box<dyn std::error::Error>> {
-    let tmp = tempfile::tempdir()?;
-    let src = tmp.path().join("src");
-    std::fs::create_dir_all(src.join("dataset"))?;
-    let parent = src.join("dataset.incn");
-    let nested = src.join("dataset").join("ops.incn");
-    std::fs::write(&parent, "pub const PARENT: int = 1\n")?;
-    std::fs::write(&nested, "pub const NESTED: int = 2\n")?;
-
-    let import = relative_module_import(&["dataset", "ops"]);
-    let resolved = resolve_source_module_import(&src, Some(&src), &import);
-
-    let SourceModuleImportResolution::Local(module_ref) = resolved else {
-        return Err("expected local source module resolution".into());
-    };
-    assert_eq!(module_ref.file_path, nested.canonicalize()?);
-    assert_eq!(module_ref.path_segments, vec!["dataset".to_string(), "ops".to_string()]);
-    Ok(())
+fn import_resolution_tempdir_cases() {
+    run_mut_rows(IMPORT_RESOLUTION_TEMPDIR_CASES, || {
+        tempfile::tempdir().expect("temporary directory")
+    });
 }
 
-#[test]
-fn resolve_source_module_import_falls_back_to_parent_for_item_style_module_import()
--> Result<(), Box<dyn std::error::Error>> {
-    let tmp = tempfile::tempdir()?;
-    let src = tmp.path().join("src");
-    std::fs::create_dir_all(src.join("db"))?;
-    let schema = src.join("db").join("schema.incn");
-    std::fs::write(&schema, "pub model Database:\n    pub id: int\n")?;
+const IMPORT_RESOLUTION_TEMPDIR_CASES: &[MutRow<tempfile::TempDir, Box<dyn std::error::Error>>] = &[
+    // A caller-supplied project source root resolves imports outside a test directory.
+    MutRow {
+        name: "resolve_import_path_falls_back_to_supplied_source_root_for_tests_dir",
+        check: |tmp| {
+            let root = tmp.path();
+            std::fs::write(
+                root.join("loaf.toml"),
+                r#"[project]
+name = "demo"
+version = "0.1.0"
+"#,
+            )?;
+            let tests_dir = root.join("tests");
+            let src_dir = root.join("src");
+            std::fs::create_dir_all(&tests_dir)?;
+            std::fs::create_dir_all(&src_dir)?;
+            let dataset = src_dir.join("dataset.incn");
+            std::fs::write(&dataset, "pub trait DataSet[T]:\n    pass\n")?;
 
-    let import = relative_module_import(&["db", "schema", "Database"]);
-    let resolved = resolve_source_module_import(&src, Some(&src), &import);
+            let SourceModuleImportResolution::Local(resolved) =
+                resolve_source_module_import(&tests_dir, Some(&src_dir), &relative_from_import("dataset"))
+            else {
+                return Err("source-root import was not resolved locally".into());
+            };
+            assert_eq!(resolved.file_path, dataset.canonicalize()?);
+            Ok(())
+        },
+    },
+    // A test-local module wins over a module under the caller-supplied source root.
+    MutRow {
+        name: "resolve_import_path_prefers_base_dir_before_source_root_fallback",
+        check: |tmp| {
+            let root = tmp.path();
+            std::fs::write(
+                root.join("loaf.toml"),
+                r#"[project]
+name = "demo"
+version = "0.1.0"
+"#,
+            )?;
+            let tests_dir = root.join("tests");
+            let src_dir = root.join("src");
+            std::fs::create_dir_all(&tests_dir)?;
+            std::fs::create_dir_all(&src_dir)?;
+            let tests_dataset = tests_dir.join("dataset.incn");
+            let src_dataset = src_dir.join("dataset.incn");
+            std::fs::write(&tests_dataset, "pub trait LocalDataSet[T]:\n    pass\n")?;
+            std::fs::write(&src_dataset, "pub trait SourceDataSet[T]:\n    pass\n")?;
 
-    let SourceModuleImportResolution::Local(module_ref) = resolved else {
-        return Err("expected parent source module resolution".into());
-    };
-    assert_eq!(module_ref.file_path, schema.canonicalize()?);
-    assert_eq!(module_ref.path_segments, vec!["db".to_string(), "schema".to_string()]);
-    Ok(())
-}
+            let SourceModuleImportResolution::Local(resolved) =
+                resolve_source_module_import(&tests_dir, Some(&src_dir), &relative_from_import("dataset"))
+            else {
+                return Err("test-local import was not resolved locally".into());
+            };
+            assert_eq!(resolved.file_path, tests_dataset.canonicalize()?);
+            Ok(())
+        },
+    },
+    // Manifest orchestration supplies a nonstandard source root explicitly at the resolution boundary.
+    MutRow {
+        name: "resolve_import_path_uses_supplied_source_root_when_configured",
+        check: |tmp| {
+            let root = tmp.path();
+            std::fs::write(
+                root.join("loaf.toml"),
+                r#"[project]
+name = "demo"
+version = "0.1.0"
 
-#[test]
-fn resolve_source_module_import_uses_source_root_for_nested_module_identity() -> Result<(), Box<dyn std::error::Error>>
-{
-    let tmp = tempfile::tempdir()?;
-    let src = tmp.path().join("src");
-    let package = src.join("pkg");
-    std::fs::create_dir_all(&package)?;
-    let sibling = package.join("bar.incn");
-    std::fs::write(&sibling, "pub const VALUE: int = 1\n")?;
+[build]
+source-root = "library"
+"#,
+            )?;
+            let tests_dir = root.join("tests");
+            let library_dir = root.join("library");
+            std::fs::create_dir_all(&tests_dir)?;
+            std::fs::create_dir_all(&library_dir)?;
+            let dataset = library_dir.join("dataset.incn");
+            std::fs::write(&dataset, "pub trait DataSet[T]:\n    pass\n")?;
 
-    let import = relative_module_import(&["bar"]);
-    let resolved = resolve_source_module_import(&package, Some(&src), &import);
+            let SourceModuleImportResolution::Local(resolved) =
+                resolve_source_module_import(&tests_dir, Some(&library_dir), &relative_from_import("dataset"))
+            else {
+                return Err("configured source-root import was not resolved locally".into());
+            };
+            assert_eq!(resolved.file_path, dataset.canonicalize()?);
+            let root_dataset = root.join("dataset.incn");
+            std::fs::write(&root_dataset, "pub trait RootDataSet[T]:\n    pass\n")?;
+            let mut root_import = relative_from_import("dataset");
+            if let ImportKind::From { module, .. } = &mut root_import.kind {
+                module.is_absolute = true;
+            }
+            assert_eq!(
+                resolve_import_path(&tests_dir, &root_import),
+                Some(root_dataset.canonicalize()?)
+            );
+            Ok(())
+        },
+    },
+    MutRow {
+        name: "resolve_source_module_import_prefers_full_module_import_path",
+        check: |tmp| {
+            let src = tmp.path().join("src");
+            std::fs::create_dir_all(src.join("dataset"))?;
+            let parent = src.join("dataset.incn");
+            let nested = src.join("dataset").join("ops.incn");
+            std::fs::write(&parent, "pub const PARENT: int = 1\n")?;
+            std::fs::write(&nested, "pub const NESTED: int = 2\n")?;
 
-    let SourceModuleImportResolution::Local(module_ref) = resolved else {
-        return Err("expected local source module resolution".into());
-    };
-    assert_eq!(module_ref.file_path, sibling.canonicalize()?);
-    assert_eq!(module_ref.path_segments, vec!["pkg".to_string(), "bar".to_string()]);
-    assert_eq!(module_ref.module_name, "pkg_bar");
-    Ok(())
-}
+            let import = relative_module_import(&["dataset", "ops"]);
+            let resolved = resolve_source_module_import(&src, Some(&src), &import);
 
-#[test]
-fn resolve_program_source_imports_does_not_admit_same_leaf_self_import() -> Result<(), Box<dyn std::error::Error>> {
-    let tmp = tempfile::tempdir()?;
-    let src = tmp.path().join("src");
-    let nested = src.join("substrait");
-    std::fs::create_dir_all(&nested)?;
-    let nested_registry = nested.join("schema_registry.incn");
-    std::fs::write(&nested_registry, "from schema_registry import registered_columns\n")?;
+            let SourceModuleImportResolution::Local(module_ref) = resolved else {
+                return Err("expected local source module resolution".into());
+            };
+            assert_eq!(module_ref.file_path, nested.canonicalize()?);
+            assert_eq!(module_ref.path_segments, vec!["dataset".to_string(), "ops".to_string()]);
+            Ok(())
+        },
+    },
+    MutRow {
+        name: "resolve_source_module_import_falls_back_to_parent_for_item_style_module_import",
+        check: |tmp| {
+            let src = tmp.path().join("src");
+            std::fs::create_dir_all(src.join("db"))?;
+            let schema = src.join("db").join("schema.incn");
+            std::fs::write(&schema, "pub model Database:\n    pub id: int\n")?;
 
-    let source = std::fs::read_to_string(&nested_registry)?;
-    let tokens =
-        lexer::lex(&source).map_err(|errors| std::io::Error::other(format!("fixture should lex: {errors:?}")))?;
-    let source_path = nested_registry.to_string_lossy();
-    let program = parser::parse_with_context_and_surfaces(&tokens, Some(source_path.as_ref()), None, None)
-        .map_err(|errors| std::io::Error::other(format!("fixture should parse: {errors:?}")))?;
+            let import = relative_module_import(&["db", "schema", "Database"]);
+            let resolved = resolve_source_module_import(&src, Some(&src), &import);
 
-    let resolved = resolve_program_source_imports(&program, &nested, Some(&src));
-    let canonical_nested_registry = nested_registry.canonicalize()?;
-    assert!(matches!(
-        &resolved[0].resolution,
-        SourceModuleImportResolution::SelfImport { module_ref, import_path, can_use_root_import }
-            if module_ref.file_path == canonical_nested_registry
-                && import_path == &["schema_registry"]
-                && *can_use_root_import
-    ));
+            let SourceModuleImportResolution::Local(module_ref) = resolved else {
+                return Err("expected parent source module resolution".into());
+            };
+            assert_eq!(module_ref.file_path, schema.canonicalize()?);
+            assert_eq!(module_ref.path_segments, vec!["db".to_string(), "schema".to_string()]);
+            Ok(())
+        },
+    },
+    MutRow {
+        name: "resolve_source_module_import_uses_source_root_for_nested_module_identity",
+        check: |tmp| {
+            let src = tmp.path().join("src");
+            let package = src.join("pkg");
+            std::fs::create_dir_all(&package)?;
+            let sibling = package.join("bar.incn");
+            std::fs::write(&sibling, "pub const VALUE: int = 1\n")?;
 
-    Ok(())
-}
+            let import = relative_module_import(&["bar"]);
+            let resolved = resolve_source_module_import(&package, Some(&src), &import);
 
-#[test]
-fn resolve_source_module_import_keeps_explicit_root_and_distinct_sibling_precedence()
--> Result<(), Box<dyn std::error::Error>> {
-    let tmp = tempfile::tempdir()?;
-    let src = tmp.path().join("src");
-    let nested = src.join("substrait");
-    std::fs::create_dir_all(&nested)?;
-    let root_registry = src.join("schema_registry.incn");
-    let nested_registry = nested.join("schema_registry.incn");
-    let consumer = nested.join("consumer.incn");
-    std::fs::write(&root_registry, "pub const ROOT: int = 1\n")?;
-    std::fs::write(&nested_registry, "pub const NESTED: int = 2\n")?;
-    std::fs::write(&consumer, "pub const CONSUMER: int = 3\n")?;
+            let SourceModuleImportResolution::Local(module_ref) = resolved else {
+                return Err("expected local source module resolution".into());
+            };
+            assert_eq!(module_ref.file_path, sibling.canonicalize()?);
+            assert_eq!(module_ref.path_segments, vec!["pkg".to_string(), "bar".to_string()]);
+            assert_eq!(module_ref.module_name, "pkg_bar");
+            Ok(())
+        },
+    },
+    MutRow {
+        name: "resolve_program_source_imports_does_not_admit_same_leaf_self_import",
+        check: |tmp| {
+            let src = tmp.path().join("src");
+            let nested = src.join("substrait");
+            std::fs::create_dir_all(&nested)?;
+            let nested_registry = nested.join("schema_registry.incn");
+            std::fs::write(&nested_registry, "from schema_registry import registered_columns\n")?;
 
-    let bare_import = relative_module_import(&["schema_registry"]);
-    let SourceModuleImportResolution::Local(sibling) =
-        resolve_source_module_import_from_source_file(&nested, Some(&src), Some(&consumer), &bare_import)
-    else {
-        return Err("expected a distinct same-directory module to remain preferred".into());
-    };
-    assert_eq!(sibling.file_path, nested_registry.canonicalize()?);
+            let source = std::fs::read_to_string(&nested_registry)?;
+            let tokens = lexer::lex(&source)
+                .map_err(|errors| std::io::Error::other(format!("fixture should lex: {errors:?}")))?;
+            let source_path = nested_registry.to_string_lossy();
+            let program = parser::parse_with_context_and_surfaces(&tokens, Some(source_path.as_ref()), None, None)
+                .map_err(|errors| std::io::Error::other(format!("fixture should parse: {errors:?}")))?;
 
-    let root_import = ImportDecl {
-        visibility: Visibility::Private,
-        kind: ImportKind::Module(ImportPath::absolute(vec!["schema_registry".to_string()])),
-        alias: None,
-    };
-    let SourceModuleImportResolution::Local(root) =
-        resolve_source_module_import_from_source_file(&nested, Some(&src), Some(&nested_registry), &root_import)
-    else {
-        return Err("expected an explicit root import to select the root module".into());
-    };
-    assert_eq!(root.file_path, root_registry.canonicalize()?);
+            let resolved = resolve_program_source_imports(&program, &nested, Some(&src));
+            let canonical_nested_registry = nested_registry.canonicalize()?;
+            assert!(matches!(
+                &resolved[0].resolution,
+                SourceModuleImportResolution::SelfImport { module_ref, import_path, can_use_root_import }
+                    if module_ref.file_path == canonical_nested_registry
+                        && import_path == &["schema_registry"]
+                        && *can_use_root_import
+            ));
+            Ok(())
+        },
+    },
+    MutRow {
+        name: "resolve_source_module_import_keeps_explicit_root_and_distinct_sibling_precedence",
+        check: |tmp| {
+            let src = tmp.path().join("src");
+            let nested = src.join("substrait");
+            std::fs::create_dir_all(&nested)?;
+            let root_registry = src.join("schema_registry.incn");
+            let nested_registry = nested.join("schema_registry.incn");
+            let consumer = nested.join("consumer.incn");
+            std::fs::write(&root_registry, "pub const ROOT: int = 1\n")?;
+            std::fs::write(&nested_registry, "pub const NESTED: int = 2\n")?;
+            std::fs::write(&consumer, "pub const CONSUMER: int = 3\n")?;
 
-    Ok(())
-}
+            let bare_import = relative_module_import(&["schema_registry"]);
+            let SourceModuleImportResolution::Local(sibling) =
+                resolve_source_module_import_from_source_file(&nested, Some(&src), Some(&consumer), &bare_import)
+            else {
+                return Err("expected a distinct same-directory module to remain preferred".into());
+            };
+            assert_eq!(sibling.file_path, nested_registry.canonicalize()?);
+
+            let root_import = ImportDecl {
+                visibility: Visibility::Private,
+                kind: ImportKind::Module(ImportPath::absolute(vec!["schema_registry".to_string()])),
+                alias: None,
+            };
+            let SourceModuleImportResolution::Local(root) = resolve_source_module_import_from_source_file(
+                &nested,
+                Some(&src),
+                Some(&nested_registry),
+                &root_import,
+            ) else {
+                return Err("expected an explicit root import to select the root module".into());
+            };
+            assert_eq!(root.file_path, root_registry.canonicalize()?);
+            Ok(())
+        },
+    },
+];

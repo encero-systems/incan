@@ -8,6 +8,7 @@ use std::sync::Arc;
 use super::canonical_remapping_tests::{body_ir, checker, parse};
 use super::rust_reexport_chain_tests::{TestResult, installed, published_root};
 use crate::loaf_index::LoafIndex;
+use crate::test_rows::{MutRow, run_mut_rows};
 use crate::typechecker::{CheckedNamespaceInterface, DependencyInterfacePreparationCache};
 
 /// A Loaf whose second model nothing names.
@@ -72,62 +73,6 @@ fn check_graph(
         body_ir: [body_ir(&provider, first), body_ir(&consumer, second)],
     };
     Ok((checked, builds))
-}
-
-/// Naming one type of a compiled Loaf builds that type's layout and the layouts a lookup then reads through it, and no
-/// other declaration of that Loaf or of the Loaves it names.
-#[test]
-fn naming_one_provider_type_builds_only_its_layout_and_the_layouts_read_through_it() -> TestResult {
-    let root = tempfile::tempdir()?;
-    let loaves = shapes(root.path())?;
-    let (_, builds) = check_graph(&loaves, &DependencyInterfacePreparationCache::default())?;
-    assert!(
-        builds.contains_key("Outer") && builds.contains_key("Inner"),
-        "the named layouts were not built: {builds:?}"
-    );
-    let unread = builds
-        .keys()
-        .filter(|name| !matches!(name.as_str(), "Outer" | "Inner"))
-        .collect::<Vec<_>>();
-    assert!(
-        unread.is_empty(),
-        "layouts no lookup read were built: {unread:?} of {builds:?}"
-    );
-    Ok(())
-}
-
-/// Building layouts on demand changes nothing that is checked or sealed: the provider's sealed interface and checked
-/// namespace, the consumer's dependency tables and both modules' Body IR equal those of an install that builds every
-/// layout at once.
-#[test]
-fn a_loaf_installed_by_name_checks_and_seals_as_one_installed_whole() -> TestResult {
-    let root = tempfile::tempdir()?;
-    let loaves = shapes(root.path())?;
-    let (by_name, _) = check_graph(&loaves, &DependencyInterfacePreparationCache::default())?;
-    let (whole, _) = check_graph(&loaves, &DependencyInterfacePreparationCache::eager_layouts())?;
-    assert_eq!(by_name, whole);
-    Ok(())
-}
-
-/// A Loaf's nominal type origins are a fact of the Loaf: the module graph collects them once for each Loaf, however
-/// many compiled Loaves' foreign preparations reach it. Here `base` is reached by its own preparation and by that of
-/// `shapes`, whose `Outer` holds a `base` model.
-#[test]
-fn a_loafs_type_origins_are_collected_once_per_module_graph() -> TestResult {
-    let root = tempfile::tempdir()?;
-    let loaves = shapes(root.path())?;
-    let cache = DependencyInterfacePreparationCache::default();
-    check_graph(&loaves, &cache)?;
-    let collections = cache.origin_collection_counts();
-    assert!(
-        collections.contains_key("base") && collections.contains_key("shapes"),
-        "the graph's foreign preparations reached no Loaf: {collections:?}"
-    );
-    assert!(
-        collections.values().all(|&count| count == 1),
-        "type origins collected more than once per Loaf: {collections:?}"
-    );
-    Ok(())
 }
 
 /// A compiled Loaf's install record holds what installing it reads of its manifest, as that manifest gives it: the
@@ -632,60 +577,6 @@ fn a_loaf_install_record_replays_the_dependency_interface_without_opening_manife
     Ok(())
 }
 
-/// Reconstruct root and authored nominal layouts from records addressed by the public or declaration name,
-/// respectively. Check the fixtures and any supplied corpus, including renamed roots and member partials.
-#[test]
-fn root_and_authored_layouts_match_their_named_records() -> TestResult {
-    let root = tempfile::tempdir()?;
-    let loaves = shapes(root.path())?;
-    let mut differences = Vec::new();
-    let mut roots = 0;
-    let mut authored = 0;
-    for entry in loaves.entries() {
-        let (root_count, authored_count) = compare_layouts(
-            &entry.artifact.manifest,
-            &entry.artifact.identity.digest,
-            &mut differences,
-        )?;
-        roots += root_count;
-        authored += authored_count;
-    }
-    assert_eq!(roots, 8, "the fixtures must exercise every root layout kind");
-    assert!(authored > 0, "the fixtures must exercise authored layouts");
-    println!("{roots} fixture roots and {authored} authored layouts");
-
-    if let Some(directory) = std::env::var_os("INCAN_RECORDS_LAYOUT_CORPUS") {
-        use sha2::{Digest, Sha256};
-        let mut paths = std::fs::read_dir(directory)?
-            .map(|entry| entry.map(|entry| entry.path()))
-            .collect::<Result<Vec<_>, _>>()?;
-        paths.sort();
-        let mut manifests = 0;
-        let mut layouts = 0;
-        let mut authored = 0;
-        for path in paths {
-            if path.extension().and_then(|extension| extension.to_str()) != Some("incnlib") {
-                continue;
-            }
-            let text = std::fs::read_to_string(&path)?;
-            let manifest = crate::library_manifest::LibraryManifest::from_json_str(&text)?;
-            let digest = format!("sha256:{:x}", Sha256::digest(text.as_bytes()));
-            match compare_layouts(&manifest, &digest, &mut differences) {
-                Ok((roots, declarations)) => {
-                    layouts += roots;
-                    authored += declarations;
-                }
-                Err(error) => differences.push(format!("{}: {error}", path.display())),
-            }
-            manifests += 1;
-        }
-        assert!(manifests > 0 && layouts > 0, "the corpus contains no root layouts");
-        println!("{manifests} census Loaves, {layouts} root layouts and {authored} authored layouts");
-    }
-    assert!(differences.is_empty(), "{}", differences.join("\n"));
-    Ok(())
-}
-
 /// Compare both the root projection and the authored declaration layouts with their corresponding record routes.
 fn compare_layouts(
     manifest: &crate::library_manifest::LibraryManifest,
@@ -871,3 +762,123 @@ fn layout_difference_paths(
         }
     }
 }
+
+#[test]
+fn lazy_layout_tests_tempdir_cases() {
+    run_mut_rows(LAZY_LAYOUT_TESTS_TEMPDIR_CASES, || {
+        tempfile::tempdir().expect("temporary directory")
+    });
+}
+
+const LAZY_LAYOUT_TESTS_TEMPDIR_CASES: &[MutRow<tempfile::TempDir, Box<dyn std::error::Error>>] = &[
+    // Naming one type of a compiled Loaf builds that type's layout and the layouts a lookup then reads through it, and
+    // no other declaration of that Loaf or of the Loaves it names.
+    MutRow {
+        name: "naming_one_provider_type_builds_only_its_layout_and_the_layouts_read_through_it",
+        check: |root| {
+            let loaves = shapes(root.path())?;
+            let (_, builds) = check_graph(&loaves, &DependencyInterfacePreparationCache::default())?;
+            assert!(
+                builds.contains_key("Outer") && builds.contains_key("Inner"),
+                "the named layouts were not built: {builds:?}"
+            );
+            let unread = builds
+                .keys()
+                .filter(|name| !matches!(name.as_str(), "Outer" | "Inner"))
+                .collect::<Vec<_>>();
+            assert!(
+                unread.is_empty(),
+                "layouts no lookup read were built: {unread:?} of {builds:?}"
+            );
+            Ok(())
+        },
+    },
+    // Building layouts on demand changes nothing that is checked or sealed: the provider's sealed interface and
+    // checked namespace, the consumer's dependency tables and both modules' Body IR equal those of an install that
+    // builds every layout at once.
+    MutRow {
+        name: "a_loaf_installed_by_name_checks_and_seals_as_one_installed_whole",
+        check: |root| {
+            let loaves = shapes(root.path())?;
+            let (by_name, _) = check_graph(&loaves, &DependencyInterfacePreparationCache::default())?;
+            let (whole, _) = check_graph(&loaves, &DependencyInterfacePreparationCache::eager_layouts())?;
+            assert_eq!(by_name, whole);
+            Ok(())
+        },
+    },
+    // A Loaf's nominal type origins are a fact of the Loaf: the module graph collects them once for each Loaf, however
+    // many compiled Loaves' foreign preparations reach it. Here `base` is reached by its own preparation and by that
+    // of `shapes`, whose `Outer` holds a `base` model.
+    MutRow {
+        name: "a_loafs_type_origins_are_collected_once_per_module_graph",
+        check: |root| {
+            let loaves = shapes(root.path())?;
+            let cache = DependencyInterfacePreparationCache::default();
+            check_graph(&loaves, &cache)?;
+            let collections = cache.origin_collection_counts();
+            assert!(
+                collections.contains_key("base") && collections.contains_key("shapes"),
+                "the graph's foreign preparations reached no Loaf: {collections:?}"
+            );
+            assert!(
+                collections.values().all(|&count| count == 1),
+                "type origins collected more than once per Loaf: {collections:?}"
+            );
+            Ok(())
+        },
+    },
+    // Reconstruct root and authored nominal layouts from records addressed by the public or declaration name,
+    // respectively. Check the fixtures and any supplied corpus, including renamed roots and member partials.
+    MutRow {
+        name: "root_and_authored_layouts_match_their_named_records",
+        check: |root| {
+            let loaves = shapes(root.path())?;
+            let mut differences = Vec::new();
+            let mut roots = 0;
+            let mut authored = 0;
+            for entry in loaves.entries() {
+                let (root_count, authored_count) = compare_layouts(
+                    &entry.artifact.manifest,
+                    &entry.artifact.identity.digest,
+                    &mut differences,
+                )?;
+                roots += root_count;
+                authored += authored_count;
+            }
+            assert_eq!(roots, 8, "the fixtures must exercise every root layout kind");
+            assert!(authored > 0, "the fixtures must exercise authored layouts");
+            println!("{roots} fixture roots and {authored} authored layouts");
+
+            if let Some(directory) = std::env::var_os("INCAN_RECORDS_LAYOUT_CORPUS") {
+                use sha2::{Digest, Sha256};
+                let mut paths = std::fs::read_dir(directory)?
+                    .map(|entry| entry.map(|entry| entry.path()))
+                    .collect::<Result<Vec<_>, _>>()?;
+                paths.sort();
+                let mut manifests = 0;
+                let mut layouts = 0;
+                let mut authored = 0;
+                for path in paths {
+                    if path.extension().and_then(|extension| extension.to_str()) != Some("incnlib") {
+                        continue;
+                    }
+                    let text = std::fs::read_to_string(&path)?;
+                    let manifest = crate::library_manifest::LibraryManifest::from_json_str(&text)?;
+                    let digest = format!("sha256:{:x}", Sha256::digest(text.as_bytes()));
+                    match compare_layouts(&manifest, &digest, &mut differences) {
+                        Ok((roots, declarations)) => {
+                            layouts += roots;
+                            authored += declarations;
+                        }
+                        Err(error) => differences.push(format!("{}: {error}", path.display())),
+                    }
+                    manifests += 1;
+                }
+                assert!(manifests > 0 && layouts > 0, "the corpus contains no root layouts");
+                println!("{manifests} census Loaves, {layouts} root layouts and {authored} authored layouts");
+            }
+            assert!(differences.is_empty(), "{}", differences.join("\n"));
+            Ok(())
+        },
+    },
+];

@@ -12,6 +12,7 @@ use crate::api_metadata::{
 use crate::library_manifest::LibraryManifest;
 use crate::library_manifest::compiler_records::RecordFamily;
 use crate::loaf_index::LoafIndex;
+use crate::test_rows::{MutRow, run_mut_rows};
 
 /// The record family of a module's type scope.
 const TYPE_SCOPE: &str = "type-scope";
@@ -21,42 +22,6 @@ fn catalog_with_a_model() -> Result<LibraryManifest, Box<dyn std::error::Error>>
     catalog_with(
         "\npub model Receipt:\n    pub cents: int\n\npub def receipt(cents: int) -> Receipt:\n    return Receipt(cents=cents)\n",
     )
-}
-
-/// After the index's summary, reading the type scope of the module `money` by its path opens its one record and
-/// nothing else, and the record names the declaration `Receipt` spells.
-#[test]
-fn a_consumer_reads_one_modules_type_scope_record_alone() -> Result<(), Box<dyn std::error::Error>> {
-    let root = tempfile::tempdir()?;
-    let set = installed_library(root.path(), &catalog_with_a_model()?)?;
-    let dir = root.path().join("debug");
-    read_summary(&set, &dir, "prices")?.ok_or("the Loaf is installed")?;
-    let indexed = set.reads();
-    let (scopes, _) =
-        read_declaration_in(&set, &dir, "prices", TYPE_SCOPE, "money")?.ok_or("the type scope record is installed")?;
-    let [scope] = scopes.as_slice() else {
-        return Err(format!("one type scope record for `money`, found {}", scopes.len()).into());
-    };
-    let mut scope = scope.clone();
-    let identity = scope["names"]["Receipt"]
-        .as_object_mut()
-        .and_then(|declared| declared.remove("identity"));
-    assert!(identity.is_some(), "the scope names the identity of `Receipt`: {scope}");
-    assert_eq!(
-        scope,
-        serde_json::json!({
-            "module": ["money"],
-            "standard": false,
-            "names": { "Receipt": { "module": ["money"], "name": "Receipt", "scoped": true } },
-        }),
-        "the scope of `money`: `Receipt` names the module's own model"
-    );
-    let (records, bytes) = (set.reads().records - indexed.records, set.reads().bytes - indexed.bytes);
-    assert_eq!(
-        records, 1,
-        "the consumer read {records} records, {bytes} bytes; it needs the type scope record alone"
-    );
-    Ok(())
 }
 
 /// A program that calls a function whose signature names a type of the Loaf is checked with that module's type scope
@@ -192,64 +157,111 @@ fn a_standard_packages_type_scope_follows_its_std_spellings() -> Result<(), Box<
     Ok(())
 }
 
-/// A program that calls a function returning a model its module re-exports through another module is checked from
-/// the function's records, the type scopes of the modules on the way and the model's own records: it reads the
-/// model's layout by its declaring module's name and never the Loaf's contract metadata.
 #[test]
-fn a_program_checks_a_function_naming_a_reexported_model_from_its_records() -> Result<(), Box<dyn std::error::Error>> {
-    let root = tempfile::tempdir()?;
-    let _selection = thread_selection::select(installed_library(root.path(), &reexporting(CODECS, &["std"])?)?);
-    let index = LoafIndex::deferred([(CODECS.to_owned(), CODECS.to_owned(), root.path().join("debug"), true)])?;
-    let source = "from std.encoding import hex\n\ndef main() -> str:\n    match hex.unhexlify(\"00\"):\n        Ok(data) => return \"\"\n        Err(error) => return error.detail\n";
-    let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
-    let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
-    let exports: Arc<[crate::module::ExportedSymbol]> = Arc::from(crate::module::exported_symbols(&program));
-    let mut checker = crate::typechecker::TypeChecker::new();
-    checker.set_current_module_path(Some(vec!["main".to_owned()]));
-    checker.set_loaves(Arc::new(index));
-    checker
-        .check_with_imports_and_exports(&program, &[], Default::default())
-        .map_err(|errors| format!("{errors:?}"))?;
-    checker.seal_current_module_dependency_interface("main", &program, exports, true);
-    let read = thread_selection::read_keys();
-    let layout = format!("/{}/", RecordFamily::Layout.as_str());
-    let named = format!("/{}", content_name(b"encoding::_shared::EncodingError"));
-    assert!(
-        read.iter().any(|key| key.contains(&layout) && key.ends_with(&named)),
-        "checking reads `EncodingError`'s layout by its declaring module's name; it read {read:?}"
-    );
-    let contract = format!("/{}/", RecordFamily::ContractMetadata.as_str());
-    let whole = read.iter().filter(|key| key.contains(&contract)).collect::<Vec<_>>();
-    assert!(
-        whole.is_empty(),
-        "checking read the Loaf's contract metadata: {whole:?}"
-    );
-    Ok(())
+fn type_scopes_tempdir_cases() {
+    run_mut_rows(TYPE_SCOPES_TEMPDIR_CASES, || {
+        tempfile::tempdir().expect("temporary directory")
+    });
 }
 
-/// The primitive provider is mandatory for a program, even when its expressions never use asynchronous tasks.
-/// Checking a plain value must neither open its task scope nor hydrate its entire contract.
-#[test]
-fn ordinary_body_does_not_open_the_task_error_provider_contract() -> Result<(), Box<dyn std::error::Error>> {
-    let root = tempfile::tempdir()?;
-    let package = "incan_stdlib_primitives";
-    let manifest = LibraryManifest::new(package, "0.1.0");
-    let _selection = thread_selection::select(installed_library(root.path(), &manifest)?);
-    let index = LoafIndex::deferred([(package.to_owned(), package.to_owned(), root.path().join("debug"), true)])?;
-    let source = "def main() -> bool:\n    return 0 in [0, 1]\n";
-    let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
-    let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
-    let mut checker = crate::typechecker::TypeChecker::new();
-    checker.set_current_module_path(Some(vec!["main".to_owned()]));
-    checker.set_loaves(Arc::new(index));
-    checker
-        .check_with_imports_and_exports(&program, &[], Default::default())
-        .map_err(|errors| format!("{errors:?}"))?;
-    let read = thread_selection::read_keys();
-    assert!(
-        read.iter()
-            .all(|key| !key.contains("/contract-metadata/") && !key.contains("/type-scope/")),
-        "{read:?}"
-    );
-    Ok(())
-}
+const TYPE_SCOPES_TEMPDIR_CASES: &[MutRow<tempfile::TempDir, Box<dyn std::error::Error>>] = &[
+    // After the index's summary, reading the type scope of the module `money` by its path opens its one record and
+    // nothing else, and the record names the declaration `Receipt` spells.
+    MutRow {
+        name: "a_consumer_reads_one_modules_type_scope_record_alone",
+        check: |root| {
+            let set = installed_library(root.path(), &catalog_with_a_model()?)?;
+            let dir = root.path().join("debug");
+            read_summary(&set, &dir, "prices")?.ok_or("the Loaf is installed")?;
+            let indexed = set.reads();
+            let (scopes, _) = read_declaration_in(&set, &dir, "prices", TYPE_SCOPE, "money")?
+                .ok_or("the type scope record is installed")?;
+            let [scope] = scopes.as_slice() else {
+                return Err(format!("one type scope record for `money`, found {}", scopes.len()).into());
+            };
+            let mut scope = scope.clone();
+            let identity = scope["names"]["Receipt"]
+                .as_object_mut()
+                .and_then(|declared| declared.remove("identity"));
+            assert!(identity.is_some(), "the scope names the identity of `Receipt`: {scope}");
+            assert_eq!(
+                scope,
+                serde_json::json!({
+                    "module": ["money"],
+                    "standard": false,
+                    "names": { "Receipt": { "module": ["money"], "name": "Receipt", "scoped": true } },
+                }),
+                "the scope of `money`: `Receipt` names the module's own model"
+            );
+            let (records, bytes) = (set.reads().records - indexed.records, set.reads().bytes - indexed.bytes);
+            assert_eq!(
+                records, 1,
+                "the consumer read {records} records, {bytes} bytes; it needs the type scope record alone"
+            );
+            Ok(())
+        },
+    },
+    // A program that calls a function returning a model its module re-exports through another module is checked from
+    // the function's records, the type scopes of the modules on the way and the model's own records: it reads the
+    // model's layout by its declaring module's name and never the Loaf's contract metadata.
+    MutRow {
+        name: "a_program_checks_a_function_naming_a_reexported_model_from_its_records",
+        check: |root| {
+            let _selection = thread_selection::select(installed_library(root.path(), &reexporting(CODECS, &["std"])?)?);
+            let index = LoafIndex::deferred([(CODECS.to_owned(), CODECS.to_owned(), root.path().join("debug"), true)])?;
+            let source = "from std.encoding import hex\n\ndef main() -> str:\n    match hex.unhexlify(\"00\"):\n        Ok(data) => return \"\"\n        Err(error) => return error.detail\n";
+            let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+            let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+            let exports: Arc<[crate::module::ExportedSymbol]> = Arc::from(crate::module::exported_symbols(&program));
+            let mut checker = crate::typechecker::TypeChecker::new();
+            checker.set_current_module_path(Some(vec!["main".to_owned()]));
+            checker.set_loaves(Arc::new(index));
+            checker
+                .check_with_imports_and_exports(&program, &[], Default::default())
+                .map_err(|errors| format!("{errors:?}"))?;
+            checker.seal_current_module_dependency_interface("main", &program, exports, true);
+            let read = thread_selection::read_keys();
+            let layout = format!("/{}/", RecordFamily::Layout.as_str());
+            let named = format!("/{}", content_name(b"encoding::_shared::EncodingError"));
+            assert!(
+                read.iter().any(|key| key.contains(&layout) && key.ends_with(&named)),
+                "checking reads `EncodingError`'s layout by its declaring module's name; it read {read:?}"
+            );
+            let contract = format!("/{}/", RecordFamily::ContractMetadata.as_str());
+            let whole = read.iter().filter(|key| key.contains(&contract)).collect::<Vec<_>>();
+            assert!(
+                whole.is_empty(),
+                "checking read the Loaf's contract metadata: {whole:?}"
+            );
+            Ok(())
+        },
+    },
+    // The primitive provider is mandatory for a program, even when its expressions never use asynchronous tasks.
+    // Checking a plain value must neither open its task scope nor hydrate its entire contract.
+    MutRow {
+        name: "ordinary_body_does_not_open_the_task_error_provider_contract",
+        check: |root| {
+            let package = "incan_stdlib_primitives";
+            let manifest = LibraryManifest::new(package, "0.1.0");
+            let _selection = thread_selection::select(installed_library(root.path(), &manifest)?);
+            let index =
+                LoafIndex::deferred([(package.to_owned(), package.to_owned(), root.path().join("debug"), true)])?;
+            let source = "def main() -> bool:\n    return 0 in [0, 1]\n";
+            let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+            let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+            let mut checker = crate::typechecker::TypeChecker::new();
+            checker.set_current_module_path(Some(vec!["main".to_owned()]));
+            checker.set_loaves(Arc::new(index));
+            checker
+                .check_with_imports_and_exports(&program, &[], Default::default())
+                .map_err(|errors| format!("{errors:?}"))?;
+            let read = thread_selection::read_keys();
+            assert!(
+                read.iter()
+                    .all(|key| !key.contains("/contract-metadata/") && !key.contains("/type-scope/")),
+                "{read:?}"
+            );
+            Ok(())
+        },
+    },
+];
