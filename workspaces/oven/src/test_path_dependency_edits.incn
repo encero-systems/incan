@@ -3,7 +3,7 @@ A program that calls a path-dependency Loaf runs the Loaf's current bodies on th
 dependency declaration rechecks the program bodies that name it, and an edit elsewhere in the Loaf leaves them checked.
 """
 
-from rust::std::process import Command
+from rust::std::process import Command, Stdio
 from rust::std::str import from_utf8
 from std.environ import get_or
 from std.fs import Path
@@ -11,6 +11,7 @@ from std.json import JsonValue, parse
 from files import read, write
 from lowering_record_fixtures import attempt_trace, command_proof, proof_count, stop_example_engine
 from scratch import scratch_directory
+from rust_argument_borrow_return_fixture import require_retained_dependency_reader
 
 const LIBRARY: str = "pub def greeting() -> str:\n    return \"from the library\"\n\n\npub def other() -> str:\n    return \"unchanged\"\n"
 
@@ -20,6 +21,7 @@ model FixtureRun:
 
     pub report: JsonValue
     pub output: str
+    pub pid: int
 
 
 pub def test_a_moved_dependency_declaration_reaches_an_unchanged_program() -> Result[None, str]:
@@ -51,15 +53,19 @@ pub def test_an_edit_after_a_dependency_declaration_leaves_its_reader_checked() 
     """
     scratch = scratch_directory()?
     app = path_dependency_fixture(scratch.path(), "greeting", "greeting()")?
+    physical = app.resolve().map_err((error) => error.message())?
     binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
     store = scratch.path().joinpath("store")
-    cold = records_run(binary, app, store)?
+    trace = attempt_trace(scratch.path(), "retained-reader")?
+    cold = records_run(binary, physical, store, Some(trace))?
     assert cold.output == "from the library\n", cold.output
     edit_library(scratch.path(), "\"unchanged\"", "\"changed after the greeting\"")?
-    edited = records_run(binary, app, store)?
-    text = edited.report.to_json().map_err((error) => error.message())?
+    edited = records_run(binary, physical, store, Some(trace))?
     assert edited.output == "from the library\n", edited.output
-    assert proof_count(edited.report, "body_evaluations")? == 0, text
+    require_retained_dependency_reader(
+        edited.report, trace, edited.pid, "run", physical, scratch.path().joinpath("lib"),
+        {"greeting": "main", "other": "main"},
+    )?
     stop_example_engine(binary, store)?
     return check_generated_enum_member_after_edit(binary, scratch.path().joinpath("generated-enum"))
 
@@ -225,20 +231,23 @@ def records_run(binary: str, app: Path, store: Path, trace: Option[Path] = None)
     if let Some(directory) = trace:
         command.env("INCAN_ENGINE_TRACE", directory.0)
         command.env("INCAN_NATIVE_PLAN_REPORT", app.joinpath("native.plan").0)
-    outcome = command
+    child = command
         .current_dir(app.0)
         .args(["run", "src/main.incn", "--engine-report"])
         .env("INCAN_ENGINE", "records")
         .env("INCAN_BAKERY", store.0)
-        .output()
+        .stdin(Stdio.null()).stdout(Stdio.piped()).stderr(Stdio.piped())
+        .spawn()
         .map_err((error) => str(error))?
+    pid = int(child.id())
+    outcome = child.wait_with_output().map_err((error) => str(error))?
     output = from_utf8(outcome.stdout).map_err((error) => str(error))?
     errors = from_utf8(outcome.stderr).map_err((error) => str(error))?
     if not outcome.status.success():
         return Err(f"records run: status={outcome.status.code()} stdout={output} stderr={errors}")
     report = command_proof(outcome.stdout)?
     lines = output.split("\n")
-    return Ok(FixtureRun(report=report, output="\n".join(lines[1:])))
+    return Ok(FixtureRun(report=report, output="\n".join(lines[1:]), pid=pid))
 
 
 def first_engine_run(binary: str, app: Path, store: Path) -> Result[str, str]:

@@ -229,6 +229,7 @@ pub from rust::internal_models_native import (
     method_lookup_suffix,
 )
 
+pub from checked_body_counts import encode_provider_body_tally, decode_provider_body_tally, provider_body_count_profile
 pub from executable_body_wire import (
     decode_executable_body, decode_executable_module, decode_executable_namespace_frame, decode_executable_namespace_view,
     decode_executable_owner_frame,

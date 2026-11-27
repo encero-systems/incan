@@ -4,6 +4,7 @@ from rust::std::process import Command, Output
 from std.fs import Path
 from std.json import JsonValue
 from pub::internal_models.checker_records import CHECKER_PROFILE
+from pub::internal_models.checked_body_counts import provider_body_count_profile
 from compiler_facts import FactAdmission, verified_fact
 from frozen_inputs import Document
 from json_fields import required_text
@@ -13,6 +14,7 @@ from toolchain_types import InstalledCompiler
 
 const PLAN_ONLY: str = "incan.driver-capabilities/1"
 const WITH_LIBRARY_LOCAL: str = "incan.driver-capabilities/2"
+const WITH_PROVIDER_COUNT: str = "incan.driver-capabilities/3"
 const LIBRARY_LOCAL_PROFILE: str = "incan.library-local-compiled-body-rows/1"
 const PLAN_SELECTION_PROFILE: str = "incan.plan-module-selection-sha256/1"
 const LEGACY_IDENTITY_USAGE: str = "usage: incan-rustc-driver --identity SYSROOT\n"
@@ -22,12 +24,14 @@ pub model DriverCapabilityProof:
 
     pub fact: FactAdmission
     pub library_local: bool
+    pub provider_body_count: bool = false
 
 pub model DriverProfiles:
     """The compiler capabilities authenticated by the selected installation page."""
 
     pub plan_selection: bool = false
     pub library_local: bool = false
+    pub provider_body_count: bool = false
 
 pub enum DriverCapabilityIntake:
     """Which existing admission can speak for the installed driver."""
@@ -43,8 +47,7 @@ pub def driver_profiles(toolchain: InstalledCompiler, documents: list[Document])
         if document.path == toolchain.driver:
             if profiles.plan_selection or document.path in [toolchain.registry_lock, toolchain.registry_units]:
                 return Err(f"{document.path}: duplicate or aliased driver capability")
-            library_local = verify_document(toolchain, document)?
-            profiles = DriverProfiles(plan_selection=true, library_local=library_local)
+            profiles = verify_document(toolchain, document)?
         elif capability_schema(document.value).startswith("incan.driver-capabilities/"):
             return Err(f"{document.path}: driver capability belongs at {toolchain.driver}")
     return Ok(profiles)
@@ -55,21 +58,29 @@ def capability_schema(document: JsonValue) -> str:
         None => return ""
         Some(value) => return value.as_str().unwrap_or("")
 
-def verify_document(toolchain: InstalledCompiler, document: Document) -> Result[bool, str]:
+def verify_document(toolchain: InstalledCompiler, document: Document) -> Result[DriverProfiles, str]:
     """Require the exact protocol, driver SHA-256 and admitted observation at the selected driver path."""
     detail = f"{document.path}: invalid driver capability"
     digest = required_text(document.value, "driver_sha256").map_err((error) => f"{detail}: {error}")?
     profile = required_text(document.value, "plan_selection_profile").map_err((error) => f"{detail}: {error}")?
     schema = capability_schema(document.value)
     fields = document.value.keys()
-    if profile != PLAN_SELECTION_PROFILE or (schema != PLAN_ONLY and schema != WITH_LIBRARY_LOCAL):
+    provider_count = schema == WITH_PROVIDER_COUNT
+    library_local = schema == WITH_LIBRARY_LOCAL or provider_count
+    if profile != PLAN_SELECTION_PROFILE or (schema != PLAN_ONLY and not library_local):
         return Err(f"{detail}: unsupported declaration")
-    library_local = schema == WITH_LIBRARY_LOCAL
     if library_local:
         rows = required_text(document.value, "library_local_profile").map_err((error) => f"{detail}: {error}")?
         checker = required_text(document.value, "checker_profile").map_err((error) => f"{detail}: {error}")?
-        if len(fields) != 5 or rows != LIBRARY_LOCAL_PROFILE or checker != CHECKER_PROFILE:
+        expected_fields = match provider_count:
+            true => 6
+            false => 5
+        if len(fields) != expected_fields or rows != LIBRARY_LOCAL_PROFILE or checker != CHECKER_PROFILE:
             return Err(f"{detail}: unsupported declaration")
+        if provider_count:
+            count = required_text(document.value, "provider_body_count_profile").map_err((error) => f"{detail}: {error}")?
+            if count != provider_body_count_profile():
+                return Err(f"{detail}: unsupported provider body count")
     elif len(fields) != 3:
         return Err(f"{detail}: unsupported declaration")
     if len(digest) != 64:
@@ -81,7 +92,7 @@ def verify_document(toolchain: InstalledCompiler, document: Document) -> Result[
         return Err(f"{detail}: driver SHA-256 differs from the admitted fact")
     if document.stamp == "" or toolchain.driver_observation != document.stamp:
         return Err(f"{detail}: driver observation differs from admission")
-    return Ok(library_local)
+    return Ok(DriverProfiles(plan_selection=true, library_local=library_local, provider_body_count=provider_count))
 
 pub def driver_document(driver: str, proof: DriverCapabilityProof) -> Document:
     """Store only the profiles the responding driver proved, beside its admitted observation."""
@@ -94,6 +105,9 @@ pub def driver_document(driver: str, proof: DriverCapabilityProof) -> Document:
         fields["schema"] = JsonValue.string(WITH_LIBRARY_LOCAL)
         fields["library_local_profile"] = JsonValue.string(LIBRARY_LOCAL_PROFILE)
         fields["checker_profile"] = JsonValue.string(CHECKER_PROFILE)
+    if proof.provider_body_count:
+        fields["schema"] = JsonValue.string(WITH_PROVIDER_COUNT)
+        fields["provider_body_count_profile"] = JsonValue.string(provider_body_count_profile())
     return Document(path=driver, stamp=proof.fact.observation, value=JsonValue.object(fields))
 
 pub def probe_driver_capability(driver: str, sysroot: str) -> Result[Option[DriverCapabilityProof], str]:
@@ -112,9 +126,16 @@ pub def probe_driver_capability(driver: str, sysroot: str) -> Result[Option[Driv
 def authenticated_profiles(
     driver: str, sysroot: str, host: str, fact: FactAdmission,
 ) -> Result[Option[DriverCapabilityProof], str]:
-    """Ask once for the complete profile and recognize only the exact historical unsupported reply."""
+    """Accept the current capability or follow an exact unsupported reply to a prior contract."""
+    library_fields = f"{host}\n{PLAN_SELECTION_PROFILE}\n{LIBRARY_LOCAL_PROFILE}\n{CHECKER_PROFILE}\n"
+    counted = identity_output(driver, ["--identity", sysroot, "--capabilities", WITH_PROVIDER_COUNT])?
+    expected_counted = f"{WITH_PROVIDER_COUNT}\n{library_fields}{provider_body_count_profile()}\n".encode("utf-8")
+    if exact_reply(counted, expected_counted):
+        return Ok(Some(DriverCapabilityProof(fact=fact, library_local=true, provider_body_count=true)))
+    if not legacy_usage(counted):
+        return Err(f"{driver}: invalid driver capability returned for Rust sysroot {sysroot}: {decoded(counted.stderr)}")
     reply = identity_output(driver, ["--identity", sysroot, "--capabilities", WITH_LIBRARY_LOCAL])?
-    expected = f"{WITH_LIBRARY_LOCAL}\n{host}\n{PLAN_SELECTION_PROFILE}\n{LIBRARY_LOCAL_PROFILE}\n{CHECKER_PROFILE}\n".encode("utf-8")
+    expected = f"{WITH_LIBRARY_LOCAL}\n{library_fields}".encode("utf-8")
     if exact_reply(reply, expected):
         return Ok(Some(DriverCapabilityProof(fact=fact, library_local=true)))
     if legacy_usage(reply):

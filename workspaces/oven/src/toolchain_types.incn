@@ -72,6 +72,7 @@ pub model Toolchain:
     # Derived from the selected installation's bound driver document, never from the manifest.
     pub supports_plan_module_selection_digest: bool = false
     pub supports_library_checked_local: bool = false
+    pub supports_provider_body_count: bool = false
 
     pub def installed(self) -> InstalledCompiler:
         """Project frozen compiler facts without retaining any request-local readers or console selection."""
@@ -144,6 +145,7 @@ pub model InstalledCompiler:
     # Reconstructed from the bound driver document; this field has no separate wire representation.
     pub supports_plan_module_selection_digest: bool = false
     pub supports_library_checked_local: bool = false
+    pub supports_provider_body_count: bool = false
 
     pub def select(self) -> Toolchain:
         """Create fresh request-local state around this admitted compiler description."""
@@ -182,4 +184,5 @@ pub model InstalledCompiler:
             driver_observation=self.driver_observation,
             supports_plan_module_selection_digest=self.supports_plan_module_selection_digest,
             supports_library_checked_local=self.supports_library_checked_local,
+            supports_provider_body_count=self.supports_provider_body_count,
         )

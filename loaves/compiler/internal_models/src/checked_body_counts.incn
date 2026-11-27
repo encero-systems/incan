@@ -1,7 +1,50 @@
-"""Counts observed by one graph-backed check, returned to Oven separately from public diagnostics. Implemented in Rust by `internal_models_native`; this module keeps the reference import path."""
+"""Private checked-body count companions for check and provider compile requests."""
+
+from std.primitives.crumb.descriptions import Description
+from std.primitives.crumb.values import Value
+from crumb_rows import ModelField, model_description, required_value
+from graph_crumb_fields import decode_graph_row, encode_graph_row, integer, number, text
 
 pub from rust::internal_models_native import (
     CheckedBodyCounts,
     encode_checked_body_counts,
     decode_checked_body_counts,
 )
+
+const COUNTS: bytes = b"chkbdy\x00"
+
+
+pub def provider_body_count_profile() -> str:
+    """Name the typed companion emitted by the original provider compile."""
+    return "incan.checked-body-counts/2"
+
+
+def provider_description() -> Description:
+    """Describe the same count companion for one native provider activation."""
+    return model_description(COUNTS, provider_body_count_profile(), [
+        ModelField(identity=b"atempt", name="attempt", storage="string"),
+        ModelField(identity=b"check_", name="body_evaluations", storage="i64"),
+        ModelField(identity=b"unit__", name="descriptor", storage="string"),
+    ])
+
+
+pub def encode_provider_body_tally(descriptor: str, attempt: str, evaluations: int) -> Result[bytes, str]:
+    """Bind actual native checker work to the selected descriptor and the fresh report path."""
+    if descriptor == "" or attempt == "" or evaluations < 0:
+        return Err("provider body tally requires a descriptor, an attempt and a nonnegative count")
+    return encode_graph_row(COUNTS, provider_description(), [
+        required_value(b"atempt", Value.Text(attempt)),
+        required_value(b"check_", integer(evaluations)),
+        required_value(b"unit__", Value.Text(descriptor)),
+    ])
+
+
+pub def decode_provider_body_tally(encoded: bytes, descriptor: str, attempt: str) -> Result[int, str]:
+    """Require the exact activation's typed companion, including when it reports zero."""
+    fields = decode_graph_row(encoded, COUNTS, provider_description(), 3)?
+    if descriptor == "" or attempt == "" or text(fields[0].value)? != attempt or text(fields[2].value)? != descriptor:
+        return Err("provider body tally belongs to another activation")
+    evaluations = number(fields[1].value)?
+    if evaluations < 0:
+        return Err("provider body tally must be nonnegative")
+    return Ok(evaluations)

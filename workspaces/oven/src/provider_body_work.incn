@@ -1,0 +1,65 @@
+"""Count only provider checker work completed during the current build request."""
+
+from rust::std::cell import RefCell
+from rust::std::ops import Deref, DerefMut
+from rust::std::rc import Rc
+
+
+pub model ProviderBodyCount:
+    """A successful activation's optional tally or the reason its proof is unavailable."""
+
+    pub observed: Option[int] = None
+    pub incomplete: str = ""
+
+
+pub model PreparedUnitCompletion:
+    """The compiler status and request-local evidence of one prepared unit."""
+
+    pub code: i32
+    pub plan_module_selection_digest: Option[str] = None
+    pub provider_body_count: ProviderBodyCount = ProviderBodyCount()
+
+
+pub model ProviderBodyTotal:
+    """One request's provider evaluations and first missing tally."""
+
+    pub evaluations: int = 0
+    pub incomplete: str = ""
+
+    pub def with_root(self, root: int) -> tuple[int, str]:
+        """Combine current provider and checker work without certifying an incomplete subtotal."""
+        if self.evaluations > 9223372036854775807 - root:
+            return (root, "provider and program body count exceeds i64")
+        return (root + self.evaluations, self.incomplete)
+
+
+pub model ProviderBodyWork:
+    """Share the request subtotal through its existing dependency callbacks."""
+
+    pub supported: bool = false
+    state: Rc[RefCell[ProviderBodyTotal]] = Rc.new(RefCell.new(ProviderBodyTotal()))
+
+    pub def record(self, provider: str, count: ProviderBodyCount) -> None:
+        """Accept successful selected work once, leaving reuse and explicit zero distinct."""
+        mut held = self.state.as_ref().borrow_mut()
+        add_provider_body_count(held.deref_mut(), provider, count)
+
+    pub def total(self) -> ProviderBodyTotal:
+        """Return only the subtotal after dependency preparation has finished."""
+        held = self.state.as_ref().borrow()
+        total = held.deref()
+        return ProviderBodyTotal(evaluations=total.evaluations, incomplete=total.incomplete)
+
+
+def add_provider_body_count(mut total: BorrowedMut[ProviderBodyTotal], provider: str, count: ProviderBodyCount) -> None:
+    """Keep the first incomplete activation rather than presenting a partial tally as complete."""
+    if total.incomplete != "":
+        return
+    if count.incomplete != "":
+        total.incomplete = f"{provider}: {count.incomplete}"
+        return
+    if let Some(value) = count.observed:
+        if value < 0 or value > 9223372036854775807 - total.evaluations:
+            total.incomplete = f"{provider}: invalid provider body count"
+        else:
+            total.evaluations += value

@@ -103,6 +103,7 @@ pub def decode(view: MappedView) -> Result[Installation, str]:
     profiles = driver_profiles(toolchain, documents)?
     toolchain.supports_plan_module_selection_digest = profiles.plan_selection
     toolchain.supports_library_checked_local = profiles.library_local
+    toolchain.supports_provider_body_count = profiles.provider_body_count
     if toolchain.supports_plan_module_selection_digest and profile != PROFILE:
         return Err("driver capability requires installation page profile /33")
     return Ok(

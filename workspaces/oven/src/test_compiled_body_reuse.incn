@@ -1,20 +1,24 @@
 """A build counts the checked bodies the compiler restored, never the records the engine merely selected for it."""
 
-from pub::incan_platform.store import begin
+from pub::incan_platform.store import SnapshotAdmission, begin
 from pub::incan_platform.store import snapshot as store_snapshot
 from pub::incan_platform.store.memory import root as memory_root
 from pub::internal_models import CompiledBodyOutputs, CompiledBodyValue, encode_compiled_body_rows
-from pub::internal_models.checked_body_counts import CheckedBodyCounts, encode_checked_body_counts
+from pub::internal_models.checked_body_counts import CheckedBodyCounts, encode_checked_body_counts, encode_provider_body_tally
 from checker_record_fixtures import empty_checker_record
 from pub::internal_models.checker_records import CheckedFamily
 from std.fs import Path
 from compiler_body_publication import prepare_compiled_bodies
 from compiler_body_values import SelectedBodyRecord
+from engine_capture import CaptureCounters
+from engine_programs import ProgramOutcome
+from engine_proofs import prepare_report
 from files import write
 from publication import publish_binary
+from provider_body_work import ProviderBodyCount, ProviderBodyWork
 from scratch import scratch_directory
 from unit import UnitDescription
-from unit_compiler import checked_body_counts
+from unit_compiler import checked_body_counts, provider_body_evaluations
 
 
 pub def test_checked_body_sidecars_preserve_observed_work_and_report_replay() -> Result[None, str]:
@@ -35,6 +39,35 @@ pub def test_checked_body_sidecars_preserve_observed_work_and_report_replay() ->
     assert not legacy.is_file()
     write(current, public)?
     assert checked_body_counts(current).is_err()
+    verify_provider_companions(scratch.path())?
+    return Ok(None)
+
+
+def verify_provider_companions(directory: Path) -> Result[None, str]:
+    """Require the provider's current typed count and refuse missing or foreign activation evidence."""
+    descriptor = directory.joinpath("provider.unit.crumb")
+    tally = directory.joinpath("provider-counts.crumb")
+    work = ProviderBodyWork()
+    for count in [1, 0]:
+        publish_binary(tally, encode_provider_body_tally(descriptor.0, tally.0, count)?)?
+        observed = provider_body_evaluations(tally, descriptor)?
+        assert observed == count
+        work.record("provider", ProviderBodyCount(observed=Some(observed)))
+    work.record("selected reuse", ProviderBodyCount())
+    current = work.total()
+    assert current.evaluations == 1 and current.incomplete == ""
+    publish_binary(tally, encode_provider_body_tally(descriptor.0, directory.joinpath("older").0, 1)?)?
+    assert provider_body_evaluations(tally, descriptor).is_err()
+    publish_binary(tally, encode_provider_body_tally(directory.joinpath("foreign-unit").0, tally.0, 1)?)?
+    assert provider_body_evaluations(tally, descriptor).is_err()
+    match provider_body_evaluations(directory.joinpath("missing"), descriptor):
+        Ok(_) => return Err("missing activation tally counted as zero")
+        Err(reason) => work.record("missing provider", ProviderBodyCount(incomplete=reason))
+    incomplete = work.total()
+    assert incomplete.evaluations == 1 and incomplete.incomplete.startswith("missing provider:")
+    mut admission = SnapshotAdmission.for_store(memory_root())
+    outcome = ProgramOutcome(code=0, body_evaluations=incomplete.evaluations, incomplete_provider_proof=incomplete.incomplete)
+    assert prepare_report(admission, "incomplete-provider", CaptureCounters(), outcome).is_err()
     return Ok(None)
 
 
