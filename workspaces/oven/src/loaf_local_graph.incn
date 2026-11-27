@@ -66,7 +66,7 @@ pub def catalog(intent: ProjectIntent, environment: str = "") -> Result[RustDepe
     if environment != "" and environment in intent.environment_rust_inputs:
         selected = intent.environment_rust_inputs[environment].clone()
         base = dependency_catalog(intent)
-        mut effective = dependency_catalog_with(intent, selected)
+        mut effective = dependency_catalog_with(intent, selected, environment)
         effective.features = environment_features(base.features, base.dependencies, effective.dependencies)
         return Ok(effective)
     return Ok(dependency_catalog(intent))
@@ -104,9 +104,9 @@ def environment_features(
     return result
 
 
-def intent_optional_aliases(intent: ProjectIntent) -> list[str]:
+def intent_optional_aliases(intent: ProjectIntent, environment: str) -> list[str]:
     """Name optional Incan path edges directly from the normalized project intent."""
-    return sorted([dependency.alias for dependency in intent.dependencies if dependency.optional])
+    return sorted([dependency.alias for dependency in intent.local_dependencies(environment) if dependency.optional])
 
 
 def key(demand: LocalDemand) -> str:
@@ -449,7 +449,7 @@ def activated(
         requested_features=requested,
         default_features=demand.defaults,
         build_unit_present=false,
-        explicit_optional_aliases=intent_optional_aliases(intent),
+        explicit_optional_aliases=intent_optional_aliases(intent, environment),
     )
     activation = activate_unit(inputs, context, demand.project).map_err((e) => e.message())?
     # 3. An active slot becomes an edge with the features and defaults it selects; an inactive one is dropped.

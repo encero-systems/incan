@@ -140,42 +140,38 @@ pub def parse_dependencies(
                     if let Some(request) = edge.facet:
                         rust_inputs.append(request)
                 elif "path" in entry:
-                    field = [group, alias]
-                    allowed(
-                        entry,
-                        [
-                            "loaf",
-                            "path",
-                            "version",
-                            "optional",
-                            "default-features",
-                            "features",
-                            "target",
-                            "package",
-                            "crate",
-                        ],
-                        manifest,
-                        field,
-                    )?
-                    path = required(entry, "path", manifest, field + ["path"])?
-                    mut features: list[str] = []
-                    if "features" in entry:
-                        features = string_list(entry["features"], manifest, field + ["features"])?
-                    dependencies.append(
-                        LocalDependency(
-                            alias=alias,
-                            path=path,
-                            optional=flag(entry, "optional", false, manifest, field)?,
-                            default_features=flag(entry, "default-features", true, manifest, field)?,
-                            features=features,
-                            rust_facet="loaf" in entry,
-                        ),
-                    )
+                    dependencies.append(local_dependency(alias, entry, manifest, [group, alias])?)
                     if "loaf" in entry:
                         rust_inputs.append(rust_request(alias, value, manifest, group)?)
                 else:
                     rust_inputs.append(rust_request(alias, value, manifest, group)?)
     return Ok((dependencies, rust_inputs))
+
+
+pub def local_dependency(
+    alias: str,
+    entry: Dict[str, TomlValue],
+    manifest: str,
+    field: list[str],
+    existing: Option[LocalDependency] = None,
+) -> Result[LocalDependency, IntakeError]:
+    """Read an authored path edge or apply explicit environment fields to an existing local edge."""
+    allowed(
+        entry,
+        ["loaf", "path", "version", "optional", "default-features", "features", "target", "package", "crate"],
+        manifest,
+        field,
+    )?
+    # An omitted path keeps the admitted base path; a new edge still requires a nonempty path.
+    mut edge = existing.unwrap_or(LocalDependency(alias=alias, path=""))
+    if "path" in entry or edge.path == "":
+        edge.path = required(entry, "path", manifest, field + ["path"])?
+    if "features" in entry:
+        edge.features = edge.features + string_list(entry["features"], manifest, field + ["features"])?
+    edge.optional = flag(entry, "optional", edge.optional, manifest, field)?
+    edge.default_features = flag(entry, "default-features", edge.default_features, manifest, field)?
+    edge.rust_facet = edge.rust_facet or "loaf" in entry
+    return Ok(edge)
 
 
 pub model InheritedEdge:

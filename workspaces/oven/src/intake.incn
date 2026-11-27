@@ -11,8 +11,10 @@ from jec import begin, record
 from observation import observe
 from rust::std::rc import Rc
 from rust::std::cell import RefCell
-from rust::std::ops import DerefMut
+from rust::std::ops import DerefMut, Index
+from rust::std::primitive import usize
 from manifest_intent import (
+    LocalDependency,
     ManifestEvidence,
     ManifestSnapshot,
     ProjectIntent,
@@ -22,6 +24,7 @@ from manifest_intent import (
     table,
 )
 from manifest_tolerance import library_scripts, without_scripts
+from rust_activation import ActivationPurpose
 
 
 pub model LocalProject:
@@ -262,7 +265,34 @@ def declares_no_entry(root: Path, intent: ProjectIntent) -> bool:
     return len(intent.scripts) == 0 and not has_library and not root.joinpath("tests").is_dir()
 
 
-pub def intake(root: Path, reader: ManifestReader = ManifestReader()) -> Result[LocalIntake, IntakeError]:
+@derive(Eq)
+model IntakeOwner:
+    """A production Loaf and the test unit it owns are distinct nodes even when they share a project root."""
+
+    root: str
+    purpose: ActivationPurpose = ActivationPurpose.Normal
+
+    def identity(self) -> str:
+        """Name this node for cycle detection."""
+        if self.purpose == ActivationPurpose.Test:
+            return "test:" + self.root
+        return self.root
+
+
+model IntakeLink:
+    """A local dependency joins the requesting unit to a production Loaf."""
+
+    requester: IntakeOwner
+    dependency_root: str
+    alias: str
+    field: list[str]
+
+
+pub def intake(
+    root: Path,
+    reader: ManifestReader = ManifestReader(),
+    purpose: ActivationPurpose = ActivationPurpose.Normal,
+) -> Result[LocalIntake, IntakeError]:
     """
     Read reachable local package requests and return their dependency-first topology.
 
@@ -273,6 +303,7 @@ pub def intake(root: Path, reader: ManifestReader = ManifestReader()) -> Result[
     Args:
         root: Existing project directory whose loaf.toml starts the local dependency closure.
         reader: Shared source readings for this preparation; every manifest the closure visits is read through it.
+        purpose: The root unit's selection. Dependencies always contribute their production edges.
 
     Returns:
         Local projects, alias-bearing edges and dependency order, or a refusal for unsupported or missing intent.
@@ -284,47 +315,87 @@ pub def intake(root: Path, reader: ManifestReader = ManifestReader()) -> Result[
     canonical = root
         .resolve()
         .map_err((error) => refusal(root.0, [], IntakeErrorKind.Missing, f"cannot {error.message()}"))?
-    mut roots: list[str] = [canonical.0]
+    mut owners = [IntakeOwner(root=canonical.0, purpose=purpose)]
     mut projects: list[LocalProject] = []
-    mut edges: list[DependencyEdge] = []
+    mut positions: Dict[str, int] = {}
+    mut links: list[IntakeLink] = []
     mut index = 0
-    while index < len(roots):
-        project = load_project(Path(roots[index]), reader)?
-        for dependency in project.intent.dependencies:
+    while index < len(owners):
+        owner = owners[index]
+        if owner.root not in positions:
+            positions[owner.root] = len(projects)
+            projects.append(load_project(Path(owner.root), reader)?)
+        project = borrowed_project(projects, positions[owner.root])
+        mut environment = ""
+        if owner.purpose == ActivationPurpose.Test:
+            environment = owner.purpose.value()
+        for dependency in project.intent.local_dependencies(environment):
             if dependency.rust_facet:
                 continue
+            field = dependency_field(project, dependency, environment)
             path = Path(project.root).joinpath(dependency.path)
-            selected = path
-                .resolve()
-                .map_err(
-                    (error) => refusal(
-                        project.evidence.path,
-                        ["dependencies", dependency.alias, "path"],
-                        IntakeErrorKind.Missing,
-                        error.message(),
-                    ).with_source(project.evidence.source),
-                )?
-            edges.append(DependencyEdge(requester_root=project.root, alias=dependency.alias, dependency_root=selected.0))
-            if selected.0 not in roots:
-                roots.append(selected.0)
-        projects.append(project)
+            selected = path.resolve().map_err(
+                (error) => refusal(
+                    project.evidence.path, field + ["path"], IntakeErrorKind.Missing, error.message(),
+                ).with_source(project.evidence.source),
+            )?
+            links.append(IntakeLink(requester=owner, dependency_root=selected.0, alias=dependency.alias, field=field))
+            child = IntakeOwner(root=selected.0)
+            if child not in owners:
+                owners.append(child)
         index += 1
+    verify_acyclic(owners, links, projects, positions)?
+    # Feature projection describes the selected root. Its production counterpart only participates in cycle checks.
+    mut edges: list[DependencyEdge] = []
+    for link in links:
+        if link.requester.root == canonical.0 and link.requester.purpose != purpose:
+            continue
+        edges.append(
+            DependencyEdge(requester_root=link.requester.root, alias=link.alias, dependency_root=link.dependency_root),
+        )
+    return Ok(LocalIntake(projects=projects, edges=edges))
+
+
+def borrowed_project(projects: Borrowed[list[LocalProject]], position: int) -> Borrowed[LocalProject] from projects:
+    """Read the retained project at its issued position without copying its manifest and intent."""
+    slot: usize = position.wrapping_resize()
+    return Index.index(projects, slot)
+
+
+def dependency_field(
+    project: Borrowed[LocalProject], dependency: Borrowed[LocalDependency], environment: str,
+) -> list[str]:
+    """Point to the local path's declaration, including an override that supplies a different path."""
+    field = ["dependencies", dependency.alias]
+    if environment == "":
+        return field
+    for base in project.intent.dependencies:
+        if base.alias == dependency.alias and base.path == dependency.path:
+            return field
+    return ["envs", environment] + field
+
+
+def verify_acyclic(
+    owners: list[IntakeOwner],
+    links: list[IntakeLink],
+    projects: list[LocalProject],
+    positions: Dict[str, int],
+) -> Result[None, IntakeError]:
+    """Check unit cycles while permitting a Test root to reach its production counterpart through a fixture."""
     mut graph = Dag[str]()
     mut nodes: Dict[str, NodeId] = {}
-    mut sources: Dict[str, str] = {}
-    for project in projects:
-        nodes[project.root] = graph.add_node(project.root)
-        sources[project.root] = project.evidence.source
-    for edge in edges:
-        if not graph.contains_edge(nodes[edge.dependency_root], nodes[edge.requester_root]):
-            graph
-                .add_edge(nodes[edge.dependency_root], nodes[edge.requester_root])
-                .map_err(
-                    (error) => refusal(
-                        Path(edge.requester_root).joinpath("loaf.toml").0,
-                        ["dependencies", edge.alias],
-                        IntakeErrorKind.Cycle,
-                        error.message(),
-                    ).with_source(sources[edge.requester_root]),
-                )?
-    return Ok(LocalIntake(projects=projects, edges=edges))
+    for owner in owners:
+        identity = owner.identity()
+        nodes[identity] = graph.add_node(owner.root)
+    for link in links:
+        child = nodes[link.dependency_root]
+        parent = nodes[link.requester.identity()]
+        if not graph.contains_edge(child, parent):
+            project = borrowed_project(projects, positions[link.requester.root])
+            let evidence: Borrowed[ManifestEvidence] = project.evidence
+            graph.add_edge(child, parent).map_err(
+                (error) => refusal(evidence.path, link.field, IntakeErrorKind.Cycle, error.message()).with_source(
+                    evidence.source,
+                ),
+            )?
+    return Ok(None)

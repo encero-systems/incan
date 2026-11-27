@@ -59,10 +59,11 @@ pub def dependency_catalog(intent: ProjectIntent) -> RustDependencyCatalog:
 pub def dependency_catalog_with(
     intent: ProjectIntent,
     requests: list[RustInputRequest],
+    environment: str = "",
 ) -> RustDependencyCatalog:
     """Project an already normalized environment overlay through the same activation catalog boundary."""
     mut dependencies: list[RustDependencyDeclaration] = []
-    for dependency in intent.dependencies:
+    for dependency in intent.local_dependencies(environment):
         if not dependency.rust_facet:
             dependencies.append(local_declaration(dependency, len(dependencies)))
     for request in requests:
