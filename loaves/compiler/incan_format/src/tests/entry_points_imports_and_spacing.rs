@@ -155,6 +155,72 @@ from rust::libm @ "0.2" import pow as rust_pow, exp as rust_exp
     Ok(())
 }
 
+/// A short import that fits on one line should be kept (or collapsed to) single-line form.
+#[test]
+fn test_format_import_short_stays_single_line() -> Result<(), FormatError> {
+    let source = "from db import (CategoryId, TagId)\n";
+    let config = FormatConfig::new().with_line_length(120);
+    let result = format_source_with_config(source, config)?;
+    assert_eq!(result.trim_end(), "from db import CategoryId, TagId");
+    Ok(())
+}
+
+/// A comma-separated import that already fits on one line is unchanged.
+#[test]
+fn test_format_import_bare_short_unchanged() -> Result<(), FormatError> {
+    let source = "from db import CategoryId, TagId\n";
+    let config = FormatConfig::new().with_line_length(120);
+    let result = format_source_with_config(source, config)?;
+    assert_eq!(result.trim_end(), "from db import CategoryId, TagId");
+    Ok(())
+}
+
+/// A long multi-item import that exceeds the line length should be wrapped.
+#[test]
+fn test_format_import_long_wraps_to_parens() -> Result<(), FormatError> {
+    // Use a very short limit so the list definitely overflows.
+    let source = "from db import CategoryId, TagId, OtherId\n";
+    let config = FormatConfig::new().with_line_length(20).with_trailing_commas(true);
+    let result = format_source_with_config(source, config)?;
+    assert!(
+        result.contains('('),
+        "expected parenthesized output for long import; got: {result}"
+    );
+    assert!(
+        result.contains("CategoryId,\n"),
+        "expected each item on its own line; got: {result}"
+    );
+    Ok(())
+}
+
+/// A multi-line parenthesized import that fits on one line is collapsed to single-line.
+#[test]
+fn test_format_import_multiline_parens_collapses_when_fits() -> Result<(), FormatError> {
+    let source = "from db import (\n    CategoryId,\n    TagId,\n)\n";
+    let config = FormatConfig::new().with_line_length(120);
+    let result = format_source_with_config(source, config)?;
+    assert_eq!(result.trim_end(), "from db import CategoryId, TagId");
+    Ok(())
+}
+
+/// Trailing comma in parenthesized output is controlled by the `trailing_commas` config.
+#[test]
+fn test_format_import_no_trailing_comma_when_disabled() -> Result<(), FormatError> {
+    let source = "from db import CategoryId, TagId, OtherId\n";
+    let config = FormatConfig::new().with_line_length(20).with_trailing_commas(false);
+    let result = format_source_with_config(source, config)?;
+    // Last item should not have a trailing comma.
+    assert!(
+        !result.contains("OtherId,\n"),
+        "expected no trailing comma after last item; got: {result}"
+    );
+    assert!(
+        result.contains("OtherId\n"),
+        "expected last item without comma; got: {result}"
+    );
+    Ok(())
+}
+
 #[test]
 fn entry_point_import_and_spacing_formatting_cases() {
     run_format_cases(ENTRY_POINT_IMPORT_AND_SPACING_CASES);
@@ -165,48 +231,6 @@ const ENTRY_POINT_IMPORT_AND_SPACING_CASES: &[FormatCase] = &[
         name: "test_format_source_empty",
         source: "",
         checks: &[],
-        ..FormatCase::DEFAULT
-    },
-    // A short import that fits on one line should be kept (or collapsed to) single-line form.
-    FormatCase {
-        name: "test_format_import_short_stays_single_line",
-        source: "from db import (CategoryId, TagId)\n",
-        line_length: Some(120),
-        checks: &[Check::IsTrimmed("from db import CategoryId, TagId")],
-        ..FormatCase::DEFAULT
-    },
-    // A comma-separated import that already fits on one line is unchanged.
-    FormatCase {
-        name: "test_format_import_bare_short_unchanged",
-        source: "from db import CategoryId, TagId\n",
-        line_length: Some(120),
-        checks: &[Check::IsTrimmed("from db import CategoryId, TagId")],
-        ..FormatCase::DEFAULT
-    },
-    // A long multi-item import that exceeds the line length should be wrapped.
-    FormatCase {
-        name: "test_format_import_long_wraps_to_parens",
-        source: "from db import CategoryId, TagId, OtherId\n",
-        line_length: Some(20),
-        trailing_commas: Some(true),
-        checks: &[Check::Has("("), Check::Has("CategoryId,\n")],
-        ..FormatCase::DEFAULT
-    },
-    // A multi-line parenthesized import that fits on one line is collapsed to single-line.
-    FormatCase {
-        name: "test_format_import_multiline_parens_collapses_when_fits",
-        source: "from db import (\n    CategoryId,\n    TagId,\n)\n",
-        line_length: Some(120),
-        checks: &[Check::IsTrimmed("from db import CategoryId, TagId")],
-        ..FormatCase::DEFAULT
-    },
-    // Trailing comma in parenthesized output is controlled by the `trailing_commas` config.
-    FormatCase {
-        name: "test_format_import_no_trailing_comma_when_disabled",
-        source: "from db import CategoryId, TagId, OtherId\n",
-        line_length: Some(20),
-        trailing_commas: Some(false),
-        checks: &[Check::Lacks("OtherId,\n"), Check::Has("OtherId\n")],
         ..FormatCase::DEFAULT
     },
     FormatCase {
