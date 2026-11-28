@@ -125,19 +125,28 @@ pub def place_synced(target: Path, data: bytes) -> Result[None, StoreError]:
     return Ok(None)
 
 
-pub def place_selection(root: Path, marker: Option[tuple[Path, bytes]], selection: bytes) -> Result[None, StoreError]:
+pub def place_selection(
+    root: Path, first: bool, marker: tuple[bool, bytes], selection: bytes,
+) -> Result[None, StoreError]:
     """
-    Place `root`'s `CURRENT`, then order the root's entries. With `marker`, place the marker first and order it ahead
-    of `CURRENT`, both under the lifecycle gate a snapshot reader holds, so no reader sees the marker alone.
+    Place `root`'s `CURRENT`, then order the root's entries. When `marker` says `FORMAT` names another format, place
+    `FORMAT` first and order it ahead of `CURRENT`, both under the lifecycle gate a snapshot reader holds. A first
+    commit keeps a `PENDING` mark from before `FORMAT` until `CURRENT` is placed, so a process exit in between leaves
+    a store that reads as uncommitted, while a committed store that loses `CURRENT` has no mark and is refused.
     """
-    match marker:
-        None => place_synced(root.joinpath("CURRENT"), selection)?
-        Some(placed) =>
-            ensure_directory(root.joinpath("locks"))?
-            gate = root.joinpath("locks/lifecycle").store_lock_exclusive().map_err((error) => io_failure(root, error))?
-            place_synced(placed[0], placed[1])?
-            sync_directory(root)?
-            place_synced(root.joinpath("CURRENT"), selection)?
+    pending = root.joinpath("PENDING")
+    if marker[0]:
+        place_synced(root.joinpath("CURRENT"), selection)?
+    else:
+        ensure_directory(root.joinpath("locks"))?
+        gate = root.joinpath("locks/lifecycle").store_lock_exclusive().map_err((error) => io_failure(root, error))?
+        if first:
+            pending.store_write_bytes(b"").map_err((error) => io_failure(pending, error))?
+        place_synced(root.joinpath("FORMAT"), marker[1])?
+        sync_directory(root)?
+        place_synced(root.joinpath("CURRENT"), selection)?
+    if pending.exists():
+        pending.store_unlink().map_err((error) => io_failure(pending, error))?
     return sync_directory(root)
 
 
