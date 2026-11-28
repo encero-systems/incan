@@ -1,10 +1,15 @@
 """Select local debug linkage and bind its loader generations at link time."""
 
+from rust::std::env::consts import OS
+from rust::std::fs import metadata
+from rust::std::os::unix::fs import PermissionsExt
+from std.environ import get_or
 from std.fs import Path
 from std.json import parse
 from bakery import fact_file
 from bakery_records import Fact
-from home_paths import bakery
+from home_paths import bakery, home
+from toolchain_types import Toolchain
 from unit import UnitDescription
 from unit_freshness import Key, fingerprint
 
@@ -39,17 +44,50 @@ pub def linkage_key(key: Key, shared: bool) -> Result[Key, str]:
     )
 
 
-pub def shared_arguments(unit: UnitDescription, requested: bool) -> Result[list[str], str]:
+pub def shared_arguments(unit: UnitDescription, toolchain: Toolchain, requested: bool) -> Result[list[str], str]:
     """
-    Select the bakery's immutable shared native store only for a requested development executable. Its carriers are
-    content-addressed, so every home that shares the bakery reads the carriers an executable fact was linked against.
+    Select the bakery's immutable shared native store only for a requested development executable, and the home's
+    installed carriers beside it.
+
+    1. The bakery's store keeps the executable's content-addressed link objects.
+    2. Carriers derive only from the crates the toolchain manifest installs. They live in the home's cache, and their
+       indexes name the home's files relative to it, so every bakery of the home, and the home after a move, reads the
+       carriers its installation check prepared.
+    3. Where rustc links through a search-path program, the program that invocation runs is named, not the search path.
     """
     if not development_link(unit, requested):
         return Ok([])
+    # 1. Link objects.
     directory = bakery()?.joinpath("native-shared").absolute().map_err(
         (error) => f"cannot {error.message()}",
     )?
-    return Ok(["--shared-native", directory.0])
+    # 2. Installed carriers.
+    installed = home()?.absolute().map_err((error) => f"cannot {error.message()}")?
+    mut arguments = ["--shared-native", directory.0]
+    arguments += ["--installed-native", installed.joinpath("cache").joinpath("native-shared").0]
+    arguments += ["--installed-home", installed.0]
+    for name in sorted([native.name for native in toolchain.externs]):
+        arguments += ["--installed-extern", name]
+    # 3. Darwin links through the driver's own linker and the SDK's `ld`; elsewhere rustc runs `cc`.
+    if OS != "macos":
+        if let Some(linker) = search_path_program("cc"):
+            arguments += ["--link-tool", linker]
+    return Ok(arguments)
+
+
+def search_path_program(program: str) -> Option[str]:
+    """The program a search-path invocation runs: the first `PATH` entry that is an executable file."""
+    for directory in get_or("PATH", "").split(":"):
+        if directory == "":
+            continue
+        candidate = Path(directory).joinpath(program)
+        match metadata(candidate.0):
+            Ok(info) =>
+                mode = int(info.permissions().mode())
+                if info.is_file() and ((mode // 64) % 2 == 1 or (mode // 8) % 2 == 1 or mode % 2 == 1):
+                    return Some(candidate.0)
+            Err(_) => pass
+    return None
 
 
 pub def library_witness(binary: Path) -> Path:

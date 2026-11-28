@@ -106,6 +106,7 @@ pub fn compile(
     rustc_args: &[String],
     access: &ToolchainAccess,
     shared_store: Option<&Path>,
+    installed: &crate::native_shared::InstalledNative,
     kind: UnitKind,
     overflow_checks: bool,
     library_facades: Vec<crate::library_exports::LibraryFacade>,
@@ -139,7 +140,7 @@ pub fn compile(
             if kind == UnitKind::Test {
                 roots.insert("test");
             }
-            crate::native_shared::libraries(roots, externs, dependency_search_paths, identity, store)?
+            crate::native_shared::libraries(roots, externs, dependency_search_paths, identity, store, installed)?
         }
         None => Vec::new(),
     };
@@ -267,7 +268,7 @@ fn append_native_linkage(
             args.push(format!("-Clink-arg={}{}", stable_link::STORE_ARGUMENT, store.display()));
         }
         // The executable is linked in the bakery and run from a copy elsewhere, so its carriers are found through
-        // absolute search paths into the bakery's shared native store, which every home on that bakery reads.
+        // absolute search paths into the carrier store of the installation that provided them.
         args.extend(absolute_rpaths(shared, identity, darwin));
     }
     if links_sysroot {
@@ -586,10 +587,10 @@ fn sysroot_linkage(identity: &DriverIdentity) -> Vec<String> {
     args
 }
 
-/// Absolute run-time search paths for a shared-linkage executable: the directory of each shared carrier, in the
-/// bakery's shared native store, and the toolchain's standard library directory. A viewed copy of the executable loads
-/// them wherever it is placed, and no path names the home that linked it. Proc-macro and other compile-time
-/// libraries are never loaded at run time, so their directories are not searched.
+/// Absolute run-time search paths for a shared-linkage executable: the directory of each shared carrier, in its
+/// installation's carrier store, and the toolchain's standard library directory. A viewed copy of the executable loads
+/// them wherever it is placed. Proc-macro and other compile-time libraries are never loaded at run time, so their
+/// directories are not searched.
 fn absolute_rpaths(linked: &[(String, PathBuf)], identity: &DriverIdentity, darwin: bool) -> Vec<String> {
     let mut directories: Vec<PathBuf> = vec![identity.sysroot.join("lib/rustlib").join(&identity.target).join("lib")];
     for (_, path) in linked {
@@ -795,6 +796,7 @@ pub def owned(limit: int) -> bool:
             &[],
             &unit.toolchain_access,
             None,
+            &Default::default(),
             UnitKind::Library,
             false,
             Vec::new(),
