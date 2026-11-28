@@ -568,7 +568,7 @@ DD-0012's verify mode, which recomputes cold and compares byte for byte, is unch
 
 ## Run and test
 
-`build` and `run` ask for the same program unit. `run` adds an execution ticket with exact binary and loader roots, arguments, working directory and environment policy, protected by a durable execution pin until the child's termination is observed. A launch is attempted at most once and never replayed. The canonical assessed executable inode is reused where behavior permits; no assessment or security policy is bypassed. A run starts the program from its sealed payload under its view's name. The engine starts the platform's first-launch assessment of a new payload when it seals it, by spawning it suspended and reaping it before any of its code runs, so the launch after the commit waits only for what is left of that assessment. The view in `target/` is still made after the commit.
+`build` and `run` ask for the same program unit. `run` adds an execution ticket with exact binary and loader roots, arguments, working directory and environment policy, protected by a durable execution pin until the child's termination is observed. A launch is attempted at most once and never replayed. The canonical assessed executable inode is reused where behavior permits; no assessment or security policy is bypassed.
 
 Compatible test cases compile into one harness with a deterministic entry map; each case runs in a fresh process of that binary. There is no five-second compile split. `TestDefinition`, `TestObservation` and `TestEvidence` are separate records; replay reports `REPLAYED` and names the original observation, and the default `test` and the census always execute afresh.
 

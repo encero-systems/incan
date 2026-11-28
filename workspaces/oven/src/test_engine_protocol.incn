@@ -18,13 +18,11 @@ from engine_programs import (
     selected_program,
     view_sealed,
 )
-from engine_program_records import SELECTION_KEY, NativeUnit, decode_program, decode_selection, encode_selection
+from engine_program_records import SELECTION_KEY, decode_program, decode_selection, encode_selection
 from engine_epochs import prepare_admitted_submit, prepare_submit
-from engine_client import run_selected, service_generation, service_identity
+from engine_client import service_generation, service_identity
 from pub::incan_platform.store import SnapshotAdmission, Transaction, durable_commits, begin, get, put, commit, commit_group
-from store_path_conversion import compact, payload_path, snapshot, store_path
-from rust::std::fs import Permissions, create_dir_all, read_to_string, set_permissions
-from rust::std::os::unix::fs import PermissionsExt
+from store_path_conversion import compact, snapshot, store_path
 from engine_proofs import report
 from std.json import JsonValue, parse
 from rust::std::process import Child, Command
@@ -56,23 +54,6 @@ from engine_protocol_fixtures import (
     await_connection, await_exit, await_service, detail, json_text_is, launch_service, release_service_result, stop_engine,
 )
 from trace_adapter import count_work, finish_counting
-
-
-pub def test_an_engine_run_starts_the_sealed_payload_of_its_program() -> Result[None, str]:
-    """A selected program runs from its immutable payload, the file whose first-launch check began when it was sealed."""
-    scratch = scratch_directory()?
-    store = scratch.path().joinpath("bakery")
-    digest = "ab00000000000000000000000000000000000000000000000000000000000001"
-    payload = payload_path(store, digest)
-    create_dir_all(payload.parent().0).map_err((error) => str(error))?
-    observed = scratch.path().joinpath("started")
-    write(payload, f"#!/bin/sh\nprintf '%s' \"$0\" > '{observed.0}'\n")?
-    set_permissions(payload.0, Permissions.from_mode(365)).map_err((error) => str(error))?
-    view = scratch.path().joinpath("target/incan/debug/bin/hello")
-    code = run_selected(store, NativeUnit(identity="", payload=digest, binary=view.0), [], None)?
-    assert code == 0
-    assert read_to_string(observed.0).map_err((error) => str(error))? == payload.0
-    return Ok(None)
 
 
 pub def test_a_frame_read_waits_when_the_peer_would_block_between_parts() -> Result[None, str]:
