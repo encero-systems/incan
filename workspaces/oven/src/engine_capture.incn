@@ -364,6 +364,37 @@ pub def selected_home() -> Result[SelectedHome, str]:
     )
 
 
+pub def probed_home(previous: Borrowed[Option[BuildEpoch]]) -> Result[Option[AdmittedHome], str]:
+    """
+    The admitted home a probe captures with, named without opening the installation page; see `recorded_home`. `None`
+    without a previous epoch, or when the catalog binds another page; the caller then reads the page.
+    """
+    recorded = match previous:
+        Some(epoch) => epoch.admitted
+        None => return Ok(None)
+    pin = toolchain_file()?
+    admission = match admitted_identity(pin.parent())?:
+        Some(identity) => identity
+        None => return Err("toolchain installation has no admitted page")
+    current = AdmittedHome(
+        home=home()?.0, pin=pin.0, standard_library=standard_library_dir()?.0, admission=admission, pinned=[],
+    )
+    return Ok(recorded_home(recorded, current))
+
+
+pub def recorded_home(recorded: list[str], current: AdmittedHome) -> Option[AdmittedHome]:
+    """
+    `current` with the frozen roots an epoch `recorded`, when it recorded the same pin and installation page: that
+    immutable page admitted exactly those roots. `None` for another pin or page.
+    """
+    page = f"installation:{current.admission}"
+    if not sorted_contains(recorded, current.pin) or not sorted_contains(recorded, page):
+        return None
+    mut found = current
+    found.pinned = [root for root in recorded if root != current.pin and root != page]
+    return Some(found)
+
+
 pub def capture(
     request: CaptureRequest,
     previous: Option[BuildEpoch],

@@ -634,7 +634,7 @@ fn checked_attempt(
     let lowering_witnesses =
         tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::prepare_lowering_input_witnesses")
             .entered();
-    let mut cacheable_bodies = callable_products.publish(&modules, &bodies[loaf_modules..]);
+    let (mut cacheable_bodies, pending_products) = callable_products.publish(&modules, &bodies[loaf_modules..]);
     let mut witnessed = cacheable_bodies
         .iter()
         .chain(analysis.namespace_lowering_inputs())
@@ -707,6 +707,7 @@ fn checked_attempt(
         CheckedProgram {
             body_evaluations,
             cacheable_bodies,
+            pending_products,
             member_owners,
             retained_namespaces,
             authored_callable_start: None,
@@ -1205,6 +1206,7 @@ mod tests {
         modules[4].loaf_callables = callables;
         let mut program = CheckedProgram {
             body_evaluations: 0,
+            pending_products: Default::default(),
             retained_namespaces: vec![
                 RetainedNamespaceBody {
                     source: "src/empty.incn".into(),

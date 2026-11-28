@@ -149,6 +149,8 @@ struct CheckedProgram {
     body_evaluations: usize,
     /// Invocation-local producer evidence for self-contained scalar native function products.
     cacheable_bodies: Vec<(incan_semantics_core::CompilerNodeId, String)>,
+    /// Product files checking is still writing; dropping them waits for the writes.
+    pending_products: callable_products::PendingProducts,
     /// Existing checker authority for selected generic methods, without source positions in their stable names.
     member_owners: BTreeMap<CanonicalSymbolId, String>,
     retained_namespaces: Vec<checked_program::RetainedNamespaceBody>,
@@ -647,6 +649,9 @@ fn compile_unit(
         dependencies.graph_body_output.clone(),
         dependencies.collect_codegraph,
     )?;
+    // Checking's product files are written while lowering and native compilation run; this compile answers only after
+    // they are in place, when `_products` is dropped.
+    let _products = std::mem::take(&mut program.pending_products);
     dependencies.graph_body_records.report_contextual_ranked_owner();
     if census_complete(&mut program, kind, overflow_checks)? {
         return Ok(UnitCompiled::InProcess);

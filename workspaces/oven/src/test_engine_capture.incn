@@ -19,6 +19,7 @@ from engine_capture import (
     capture,
     capture_with,
     read_file,
+    recorded_home,
 )
 from engine_epoch_records import encode_epoch, encode_head, read_epoch, read_head
 from engine_epochs import capture_submit, prepare_submit, after_projection
@@ -180,6 +181,31 @@ pub def test_an_unchanged_rerun_makes_zero_reads_and_zero_hashes() -> Result[Non
     first_rerun = prepare_submit(store, submit)?
     assert first_rerun.encodings == 0 and first_rerun.commits == 0
     assert first_rerun.identity_encodings == 0
+    return Ok(None)
+
+
+pub def test_a_probe_takes_the_frozen_roots_its_epoch_recorded_for_the_same_installation_page() -> Result[None, str]:
+    """
+    A probe that names its home from the previous epoch, for the same pin and installation page, captures exactly as
+    the home itself: unchanged, with nothing read or hashed. Another page names no roots.
+    """
+    scratch = scratch_directory()?
+    admitted = installed_home(scratch.path())?
+    app = project(scratch.path().joinpath("app"))?
+    request = run_request(app.joinpath("src/main.incn"), [])
+    epoch = epoch_of(capture(request, None, admitted, 0)?)?
+    mut unnamed = admitted
+    unnamed.pinned = []
+    match recorded_home(epoch.admitted, unnamed):
+        None => return Err("the recorded installation page named no frozen roots")
+        Some(probed) =>
+            assert sorted(probed.pinned) == sorted(admitted.pinned)
+            again = capture(request, Some(epoch), probed, 0, true)?
+            assert again.outcome == CaptureOutcome.Unchanged
+            assert again.counters.in_reach.reads == 0 and again.counters.in_reach.hashes == 0
+    mut other = unnamed
+    other.admission = "another-installation"
+    assert recorded_home(epoch.admitted, other) is None
     return Ok(None)
 
 

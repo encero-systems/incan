@@ -127,36 +127,110 @@ impl CallableProducts {
 
     /// Publish independently validated products from the actual completed Body IR pass. A cache write failure is
     /// observational only and cannot change source acceptance or substitute another native implementation.
+    ///
+    /// The native inputs are returned at once; the product files are written on their own thread while lowering and
+    /// native compilation run. The returned `PendingProducts` waits for those writes when it is dropped.
     pub(super) fn publish(
         mut self,
         modules: &[ParsedModule],
         bodies: &[BodyIrModule],
-    ) -> Vec<(incan_semantics_core::CompilerNodeId, String)> {
+    ) -> (Vec<(incan_semantics_core::CompilerNodeId, String)>, PendingProducts) {
         let Some(directory) = self.directory else {
-            return Vec::new();
+            return (Vec::new(), PendingProducts::default());
         };
         let mut admitted = Vec::new();
+        let mut writes = Vec::new();
         for (module, body) in modules.iter().zip(bodies) {
             let Some(inputs) = self.inputs.remove(&module.file_path) else {
                 continue;
             };
-            let result = inputs
+            let finished = inputs
                 .finish(body)
                 .map_err(|error| error.to_string())
                 .and_then(|products| {
                     admitted.extend(products.native_inputs().map_err(|error| error.to_string())?);
-                    let Some(source) = project_source(&self.project_root, module) else {
-                        return Ok(());
-                    };
-                    let path = directory.join(module_key(module));
-                    publish(&path, products, &body.module_id, &source)
-                        .map_err(|error| format!("cannot publish callable products {}: {error}", path.display()))
+                    Ok(products)
                 });
-            if let Err(error) = result {
-                tracing::debug!(target: "incan::invocation", %error, "callable products were not retained");
+            match finished {
+                Ok(products) => {
+                    if let Some(source) = project_source(&self.project_root, module) {
+                        writes.push(ProductWrite {
+                            path: directory.join(module_key(module)),
+                            products,
+                            module: body.module_id.clone(),
+                            source,
+                        });
+                    }
+                }
+                Err(error) => {
+                    tracing::debug!(target: "incan::invocation", %error, "callable products were not retained")
+                }
             }
         }
-        admitted
+        (admitted, PendingProducts::write(writes))
+    }
+}
+
+/// One module's finished products and the file they replace.
+struct ProductWrite {
+    path: PathBuf,
+    products: CallableBodyProducts,
+    module: CompilerNodeId,
+    source: String,
+}
+
+/// Product files one invocation is still writing. Dropping it waits for them, so a compile replies, and a process
+/// exits, only after its files are in place: every later reader finds them exactly as when they were written inline.
+#[derive(Default)]
+pub(super) struct PendingProducts(Option<std::thread::JoinHandle<()>>);
+
+impl PendingProducts {
+    /// Write `writes` on a thread of their own. Without a thread they are not retained, like any failed write.
+    fn write(writes: Vec<ProductWrite>) -> Self {
+        if writes.is_empty() {
+            return Self::default();
+        }
+        let parent = tracing::Span::current();
+        Self::spawn(move || {
+            let _parent = parent.enter();
+            let _publication =
+                tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::publish_callable_products")
+                    .entered();
+            for write in writes {
+                if let Err(error) = publish(&write.path, write.products, &write.module, &write.source) {
+                    tracing::debug!(target: "incan::invocation", path = %write.path.display(), %error,
+                        "callable products were not retained");
+                }
+            }
+        })
+    }
+
+    fn spawn(work: impl FnOnce() + Send + 'static) -> Self {
+        match std::thread::Builder::new().name("callable-products".into()).spawn(work) {
+            Ok(writing) => Self(Some(writing)),
+            Err(error) => {
+                tracing::debug!(target: "incan::invocation", %error, "callable products were not retained");
+                Self::default()
+            }
+        }
+    }
+
+    /// Wait until this invocation's product files are written.
+    pub(super) fn finish(&mut self) {
+        let Some(writing) = self.0.take() else {
+            return;
+        };
+        let _waiting =
+            tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::await_callable_products").entered();
+        if writing.join().is_err() {
+            tracing::debug!(target: "incan::invocation", "callable product publication stopped; products were not retained");
+        }
+    }
+}
+
+impl Drop for PendingProducts {
+    fn drop(&mut self) {
+        self.finish();
     }
 }
 
@@ -304,6 +378,18 @@ impl<T: Clone> DecodedProducts<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dropping_pending_products_waits_for_their_writes() {
+        let written = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let writer = std::sync::Arc::clone(&written);
+        let pending = PendingProducts::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            writer.store(true, std::sync::atomic::Ordering::SeqCst);
+        });
+        drop(pending);
+        assert!(written.load(std::sync::atomic::Ordering::SeqCst));
+    }
 
     #[test]
     fn a_decode_is_reused_only_for_the_same_file_bytes_module_and_source() {

@@ -16,8 +16,10 @@ from engine_capture import (
     InputPath,
     InputRole,
     InputSelection,
+    AdmittedHome,
     SelectedHome,
     capture,
+    probed_home,
     selected_home,
 )
 from engine_messages import Submit
@@ -30,6 +32,7 @@ from features import FeatureRequest
 from observation import SourceReading, children, observe, trace
 from unit import describe, discovered_project
 from unit_freshness import collect_program_reach, fingerprint
+from toolchain import toolchain_file
 from unit_sources import SourceGraph, recorded_reach
 from jec import begin as begin_work, record as record_work
 from pub::incan_platform.trace import Operation
@@ -123,24 +126,25 @@ def prepare_capture(
         None => Path(submit.requested_roots).resolve().map_err((error) => f"cannot {error.message()}")?
     if not source.0.endswith(".incn") or submit.view == "":
         return Err("unit records require one Incan program file and a project view")
-    selected = selected_home()?
-    admitted = selected.admitted
+    pin = toolchain_file()?
     # Checks and editor saves need the source bodies. Other builds and runs can select a declared shared provider.
     project_library = submit.command != "check" and not is_editor_view(submit.view)
     inputs = [
-        "settled-source-observation/4", str(project_library), submit.view, source.0, submit.input_selection, admitted.pin,
+        "settled-source-observation/4", str(project_library), submit.view, source.0, submit.input_selection, pin.0,
     ]
     head = f"incan.engine.capture-head\t{fingerprint(inputs)?}"
     before = admission.open(submit.view).map_err((error) => error.message())?
     prior_revision, prior_identity, previous = previous_epoch(before, head)?
+    admitted, selected_page = capture_home(probe_only, previous)?
     # 2. Every engine request starts at its selected source, and build and run select the same program inputs: the verb
     #    is an execution action, not a compiled identity. The unit's recorded source graphs bound its reach once they
     #    exist.
     mut reach = recorded_reach(source, submit.input_selection)
     if reach is None and discover_standalone:
-        match first_standalone_reach(source, submit.input_selection, selected):
-            Ok(found) => reach = found
-            Err(reason) => trace(f"source graph unavailable for {source.0}: {reason}")
+        if let Some(page) = selected_installation(selected_page, admitted)?:
+            match first_standalone_reach(source, submit.input_selection, page):
+                Ok(found) => reach = found
+                Err(reason) => trace(f"source graph unavailable for {source.0}: {reason}")
     request = CaptureRequest(
         roots=[source.0],
         selection=InputSelection(command="run", profile=submit.input_selection, features=diagnostic_features()),
@@ -158,6 +162,10 @@ def prepare_capture(
             return Err(f"capture could not settle inputs: {captured.unstable}")
         Some(epoch) =>
             if captured.outcome == CaptureOutcome.Unchanged and prior_identity != "":
+                # A page the catalog no longer binds leaves an unchanged probe to the service.
+                selected = match selected_installation(selected_page, admitted)?:
+                    Some(found) => found
+                    None => return Ok(None)
                 return Ok(
                     Some(CapturedRequest(
                         epoch=epoch,
@@ -176,6 +184,9 @@ def prepare_capture(
                 )
             if probe_only:
                 return Ok(None)
+            selected = match selected_installation(selected_page, admitted)?:
+                Some(found) => found
+                None => return Err("the toolchain installation changed while its request was captured")
             # 3. Metadata belongs to a captured revision, while the epoch's semantic identity excludes it.
             publishing = begin_work()
             encoded = encode_epoch(epoch)?
@@ -202,6 +213,37 @@ def prepare_capture(
                     readings=captured.readings,
                 )),
             )
+
+
+def capture_home(
+    probe_only: bool, previous: Borrowed[Option[BuildEpoch]],
+) -> Result[tuple[AdmittedHome, Option[SelectedHome]], str]:
+    """
+    The admitted home a capture uses, and the installation page it read for it. A probe takes its frozen roots from the
+    previous epoch while the installation still binds the page that epoch recorded, so a changed request reaches the
+    service without this caller reading the page; an unchanged answer reads it then.
+    """
+    if probe_only:
+        if let Some(found) = probed_home(previous)?:
+            return Ok((found, None))
+    selected = selected_home()?
+    return Ok((selected.admitted, Some(selected)))
+
+
+def selected_installation(
+    read: Borrowed[Option[SelectedHome]], admitted: Borrowed[AdmittedHome],
+) -> Result[Option[SelectedHome], str]:
+    """
+    The installation page this request selected. A probe that named its frozen roots from its previous epoch reads the
+    page only now, and only while the catalog still binds the page those roots came from.
+    """
+    match read:
+        Some(found) => return Ok(Some(found))
+        None =>
+            found = selected_home()?
+            if found.admitted.admission != admitted.admission:
+                return Ok(None)
+            return Ok(Some(found))
 
 
 def first_standalone_reach(source: Path, profile: str, selected: Borrowed[SelectedHome]) -> Result[Option[SourceGraph], str]:
