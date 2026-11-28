@@ -948,12 +948,15 @@ def prove_crash_boundaries(base: Path) -> Result[None, str]:
             assert text(lookup(reopened, "b")) == "two"
             assert text(lookup(reopened, "c")) == "three"
     println(f"S1 process-exit matrix: {len(boundaries)} boundaries, 0 partial snapshots")
-    return prove_first_commit_boundaries(base)
+    return prove_first_commit_boundaries(base, boundaries)
 
 
-def prove_first_commit_boundaries(base: Path) -> Result[None, str]:
-    """A store's first commit stopped before its switch reads as an empty store, never as a damaged one."""
-    for boundary in ["manifest-directory-synced", "objects-ordered", "pin-acquired"]:
+def prove_first_commit_boundaries(base: Path, boundaries: list[str]) -> Result[None, str]:
+    """
+    A store's first commit stopped at any boundary reads as the empty store or its complete first generation, never as
+    a damaged one, and the next commit publishes normally; a committed store that then loses `CURRENT` is refused.
+    """
+    for boundary in boundaries:
         root = base.joinpath(f"first-{boundary}")
         mut command = proof_command("test_a_commit_interrupted_before_its_switch_leaves_the_last_generation_visible")?
         command.env("INCAN_STORE_PROOF_CHILD", "crash").env("INCAN_STORE_PROOF_ROOT", root.0)
@@ -962,7 +965,17 @@ def prove_first_commit_boundaries(base: Path) -> Result[None, str]:
         stopped: i32 = 86
         assert status.code() == Some(stopped), f"first-commit boundary {boundary} did not terminate the writer"
         reopened = snapshot(root).map_err((error) => f"first-commit boundary {boundary}: {error.message()}")?
-        assert reopened.generation == 0, f"first-commit boundary {boundary} selected {reopened.generation}"
+        if reopened.generation == 0:
+            assert text(lookup(reopened, "b")) == "<absent>"
+        else:
+            assert reopened.generation == 1, f"first-commit boundary {boundary} selected {reopened.generation}"
+            assert text(lookup(reopened, "b")) == "two"
+        following = write_one(root, "a", "one").map_err((error) => f"after first-commit {boundary}: {error.message()}")?
+        assert following.generation == reopened.generation + 1
+        assert not root.joinpath("PENDING").is_file(), f"first-commit boundary {boundary} kept its pending mark"
+    damaged = base.joinpath("first-current-written")
+    damaged.joinpath("CURRENT").unlink().map_err((error) => error.message())?
+    assert error_kind(snapshot(damaged)) == "integrity"
     return Ok(None)
 
 
