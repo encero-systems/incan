@@ -30,6 +30,8 @@ from pub::incan_platform.ipc import Connection, listen
 from engine_endpoint import owner_uid, connect_with
 from engine_service import greet
 from toolchain import load_toolchain, toolchain_directory
+from home_paths import home
+from observation import file_digest
 from engine_channel import Channel
 from engine_messages import (
     BindingOutcome,
@@ -172,7 +174,8 @@ def check_explicit_standard_sources(binary: str, root: Path) -> Result[None, str
 pub def test_a_fresh_worker_hashes_no_native_input_an_earlier_worker_hashed() -> Result[None, str]:
     """
     A compiler worker names the native inputs of shared carriers, the driver among them, by their bytes once per file
-    identity: the store records each digest, so a fresh worker hashes no input an earlier worker hashed.
+    identity for the home: its carrier store records each digest, so no fresh worker, in any bakery of the home,
+    hashes an input an earlier worker hashed.
     """
     scratch = scratch_directory()?
     root = scratch.path()
@@ -221,8 +224,15 @@ pub def test_a_fresh_worker_hashes_no_native_input_an_earlier_worker_hashed() ->
         for input in inputs:
             hashed_by[input] = hashed_by.get(input, 0) + 1
     println(f"native inputs hashed: {len(hashed_by)}")
-    # The first edit's worker names every carrier input, so a driver that traces none of its hashes cannot pass.
-    assert len(hashed_by) > 0, "no worker traced a native input hash"
+    # The home records the digest of the driver every carrier derives from, so a driver that records none cannot pass.
+    digest = file_digest(Path(load_toolchain()?.driver))?
+    receipts = home()?.joinpath("cache").joinpath("native-shared").joinpath("link-inputs").joinpath("identities")
+    mut recorded = false
+    for receipt in receipts.iterdir().map_err((error) => error.message())?:
+        text = receipt.read_text("utf-8", "strict").map_err((error) => error.message())?
+        if text.strip().endswith(f" {digest}"):
+            recorded = true
+    assert recorded, "the home recorded no digest of the driver its carriers derive from"
     again = sorted([input for input in hashed_by.keys() if hashed_by[input] > 1])
     assert len(again) == 0, f"fresh workers hashed native inputs an earlier worker hashed: {again}"
     return Ok(None)

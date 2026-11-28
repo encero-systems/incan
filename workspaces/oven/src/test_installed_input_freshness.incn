@@ -582,26 +582,30 @@ def verify_page_vectors(path: Path) -> Result[None, str]:
 
 
 def verify_installation_check(scratch: Path) -> Result[None, str]:
-    """Installation uses one ordinary run, validates its output and removes the temporary project on either outcome."""
+    """
+    Installation uses one ordinary run and then one ordinary test, validates their output and removes the temporary
+    project on either outcome.
+    """
     directory = scratch.joinpath("checked-installation")
     make_directory(directory)?
     oven = scratch.joinpath("installation-oven")
     calls = scratch.joinpath("installation-calls")
     mut script = "#!/bin/sh\n" + f"printf 'x' >> '{calls.0}'\n"
-    script += "[ \"$1\" = run ] && [ -f \"$2\" ] || exit 1\n"
     script += "[ -z \"${INCAN_STDLIB:-}\" ] || exit 1\n"
+    script += "[ \"$1\" = test ] && [ -f \"$2\" ] && printf '%s::test_greeting PASSED\\n' \"$2\" && exit 0\n"
+    script += "[ \"$1\" = run ] && [ -f \"$2\" ] || exit 1\n"
     script += "printf 'incan installation verified\\n'\n"
     write(oven, script)?
     make_executable(oven)?
     verify_runtime(oven.0, directory)?
-    assert read(calls)? == "x"
+    assert read(calls)? == "xx"
     write(oven, script + "exit 1\n")?
     make_executable(oven)?
     match verify_runtime(oven.0, directory):
         Ok(_) =>
             assert false, "installation accepted a failed runtime"
         Err(_) => pass
-    assert read(calls)? == "xx"
+    assert read(calls)? == "xxx"
     for path in scratch.iterdir().map_err((error) => error.message())?:
         assert not path.name().startswith(".installation-check-")
     return Ok(None)

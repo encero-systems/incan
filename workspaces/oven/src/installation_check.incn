@@ -1,4 +1,4 @@
-"""Qualify the installed development runtime through the ordinary run route before installation returns."""
+"""Qualify the installed development runtime through the ordinary run and test routes before installation returns."""
 
 from pub::incan_platform.trace import Operation
 from rust::std::env import current_exe
@@ -10,6 +10,7 @@ from rust_target import decoded
 from jec import begin, record
 
 const GREETING: str = "incan installation verified"
+const TEST_SOURCE: str = "test_installation.incn"
 
 
 pub def verify_installed_runtime(directory: Path) -> Result[None, str]:
@@ -23,18 +24,26 @@ pub def verify_runtime(oven: str, directory: Path) -> Result[None, str]:
     Qualify one installation, preserving its native preparation and removing only this check's temporary project.
 
     1. Create an exclusive temporary project beside the installation.
-    2. Compile and execute the built-in program through the ordinary run command.
+    2. Compile and execute the built-in program through the ordinary run command, then its test through the ordinary
+       test command.
     3. Remove the project on success or failure; shared runtime artifacts remain available in the home.
     """
     # 1. A collision refuses rather than overwrite an existing project.
     project = directory.parent().joinpath(f".installation-check-{id()}")
     create_dir(project.0).map_err((error) => str(error))?
-    # 2. The same route prepares installed manifest facts and the reached development runtime once.
-    result = check_program(oven, project.joinpath("main.incn"))
+    # 2. The same routes prepare installed manifest facts and the reached development and test runtime once, so the
+    #    home's first project links against them.
+    result = check_routes(oven, project)
     # 3. The project belongs entirely to this check, including when compilation or execution failed.
     cleanup = remove_dir_all(project.0).map_err((error) => str(error))
     result?
     return cleanup
+
+
+def check_routes(oven: str, project: Path) -> Result[None, str]:
+    """Run the built-in program, then its test, in the check's own project."""
+    check_program(oven, project.joinpath("main.incn"))?
+    return check_test(oven, project)
 
 
 def check_program(oven: str, source: Path) -> Result[None, str]:
@@ -52,4 +61,26 @@ def check_program(oven: str, source: Path) -> Result[None, str]:
         return Err(f"installed runtime verification failed: {decoded(output.stderr)}")
     if decoded(output.stdout) != GREETING + "\n":
         return Err("installed runtime verification returned unexpected output")
+    return Ok(None)
+
+
+def check_test(oven: str, project: Path) -> Result[None, str]:
+    """Require the installed test runtime to pass the built-in test, with no developer standard-library override."""
+    write(
+        project.joinpath(TEST_SOURCE),
+        f"def greeting() -> str:\n    return \"{GREETING}\"\n\n\ndef test_greeting() -> None:\n    assert greeting() == \"{GREETING}\"\n",
+    )?
+    mut command = Command.new(oven)
+    command.arg("test").arg(TEST_SOURCE)
+    command.current_dir(project.0)
+    command.env_remove("INCAN_STDLIB")
+    command.env_remove("INCAN_SOURCE_ROOT")
+    command.env_remove("RUSTC_BOOTSTRAP")
+    clock = begin()
+    output = command.output().map_err((error) => str(error))?
+    record(Operation.InstallationRuntime, project.joinpath(TEST_SOURCE).0, clock)
+    if not output.status.success():
+        return Err(f"installed test runtime verification failed: {decoded(output.stderr)}")
+    if decoded(output.stdout) != f"{TEST_SOURCE}::test_greeting PASSED\n":
+        return Err("installed test runtime verification returned unexpected output")
     return Ok(None)

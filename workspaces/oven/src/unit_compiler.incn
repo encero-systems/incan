@@ -172,9 +172,11 @@ pub def compile_prepared_unit_completion(
         executable,
         dependency_source_roots(unit),
         toolchain.sysroot,
-    )? + anchor_arguments(toolchain.closure_anchors)? + shared_arguments(unit, development)? + archive_arguments(
-        unit.c_archives,
-    )
+    )? + anchor_arguments(toolchain.closure_anchors)? + shared_arguments(
+        unit,
+        toolchain,
+        development,
+    )? + archive_arguments(unit.c_archives)
     if toolchain.codegraph_on_request:
         native.append("--no-codegraph")
     if let Some(digest) = plan_selection_digest:

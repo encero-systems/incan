@@ -1,4 +1,4 @@
-"""Development executables link shared carriers from the bakery every home on it reads."""
+"""Development executables keep link objects in the bakery and link installed carriers from the home."""
 
 from rust::std::env import current_exe
 from rust::std::process import Command
@@ -13,7 +13,7 @@ from compiler_graph_records import ReceiptProjectionCache
 from bakery_roots import collect
 from engine_program_records import decode_program
 from files import make_directory, read, write
-from home_paths import bakery
+from home_paths import bakery, home
 from engine_epochs import prepare_admitted_submit
 from engine_messages import Submit
 from engine_programs import (
@@ -25,13 +25,17 @@ from scratch import scratch_directory
 from shared_link import shared_arguments
 from store_path_conversion import snapshot, store_path
 from toolchain import Toolchain, load_toolchain
+from toolchain_types import NativeCrate
 from unit import UnitDescription
 from unit_transport import CompilerSourceCapture
 from unit_freshness import Key, fingerprint, unit_key
 
 
-pub def test_development_executables_link_carriers_from_the_bakery() -> Result[None, str]:
-    """A development executable links its shared carriers from the bakery, which every home on it reads."""
+pub def test_development_executables_link_installed_carriers_from_the_home() -> Result[None, str]:
+    """
+    A development executable keeps its link objects in the bakery and links carriers of the installed crates from the
+    home, whose files their indexes name relative to it.
+    """
     unit = UnitDescription(
         source="src/main.incn",
         project_root="/project",
@@ -47,9 +51,34 @@ pub def test_development_executables_link_carriers_from_the_bakery() -> Result[N
         c_headers=[],
         kind="test",
     )
+    toolchain = Toolchain(
+        driver="",
+        sysroot="",
+        rust_abi=[],
+        externs=[
+            NativeCrate(name="incan_std_web", path="/t/web.rlib"),
+            NativeCrate(name="incan_native_runtime", path="/t/rt.rlib"),
+        ],
+        search=[],
+        registry_units="",
+    )
     store = bakery()?.joinpath("native-shared").absolute().map_err((error) => error.message())?
-    assert shared_arguments(unit, true)? == ["--shared-native", store.0]
-    assert shared_arguments(unit, false)? == []
+    installed = home()?.absolute().map_err((error) => error.message())?
+    expected = [
+        "--shared-native",
+        store.0,
+        "--installed-native",
+        installed.joinpath("cache").joinpath("native-shared").0,
+        "--installed-home",
+        installed.0,
+        "--installed-extern",
+        "incan_native_runtime",
+        "--installed-extern",
+        "incan_std_web",
+    ]
+    selected = shared_arguments(unit, toolchain, true)?
+    assert selected[:len(expected)] == expected, str(selected)
+    assert shared_arguments(unit, toolchain, false)? == []
     return Ok(None)
 
 
@@ -205,7 +234,7 @@ pub def test_a_standalone_unit_linked_again_to_different_bytes_replaces_its_inde
     launcher_payload = observe_executable(launcher, ["--version"])?
     assert launcher_payload.stdout.startswith("incan "), launcher_payload.stdout
     test_payload = observe_executable(test_runner, ["--list", "--format", "terse"])?
-    known_test = "test_development_executables_link_carriers_from_the_bakery: test"
+    known_test = "test_development_executables_link_installed_carriers_from_the_home: test"
     assert known_test in test_payload.stdout.split("\n"), test_payload.stdout
     assert launcher_payload.digest != test_payload.digest
     toolchain = carrier_toolchain(root, carrier, [launcher, test_runner])?
