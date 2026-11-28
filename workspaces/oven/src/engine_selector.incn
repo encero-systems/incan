@@ -4,7 +4,7 @@ from engine_wire import Refusal, RefusalKind
 
 
 pub enum Engine:
-    """The explicit migration modes; legacy remains the default until E7 acceptance."""
+    """The explicit migration modes; records is the default, and legacy runs only when `INCAN_ENGINE` names it."""
 
     Legacy
     Records
