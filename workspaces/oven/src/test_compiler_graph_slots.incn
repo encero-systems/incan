@@ -1,10 +1,22 @@
 """Retired compiler graph slots: removed and replaced functions, scope names after their last reader, checked declaration
 slots, and toolchain transitions keep only what their history needs."""
 
-from pub::incan_platform.store import begin, commit, get, put
+from pub::incan_platform.store import Snapshot, begin, commit, get, keys, put
 from pub::incan_platform.store import snapshot as store_snapshot
 from pub::incan_platform.store.memory import root as memory_root
-from pub::internal_models.records import ReadScope, encode_record_key
+from pub::internal_models.records import (
+    PreparationEvidence,
+    ReadScope,
+    RecordRead,
+    RecordReads,
+    RecordRequest,
+    RecordSelection,
+    StoreRecordSource,
+    encode_record_key,
+)
+from compiler_graph_record_fixtures import count_prefix, key, request
+from compiler_graph_rows import OutgoingEdge, encode_outgoing
+from std.encoding.hex import hexlify
 from pub::internal_models import (
     CompiledBodyFallback,
     CompiledBodyOutputs,
@@ -120,15 +132,16 @@ pub def test_scope_name_leaves_only_after_its_last_reader_is_retired() -> Result
     prepared = prepare_evaluation(transfer, owners[2].identity, rank, b"checked", receipt)?
     assert transfer.root.value == shared.root.value and transfer.root.placement == shared.root.placement
     assert transfer.base == shared.generation and transfer.view == shared.view
-    assert prepared.edge_count == 1 and len(transfer.writes) == 7
+    assert prepared.edge_count == 1 and len(transfer.writes) == 6
     positions, _output_slots, _renewed_scopes = output_replacements(transfer.writes)
     mut edges = 0
     for position in range(len(transfer.writes)):
         written = transfer.writes[position].key
-        if written.startswith("incan.engine.edge-out/3\t") or written.startswith("incan.engine.edge-in/3\t"):
+        assert not written.startswith("incan.engine.edge-out/3\t"), "an evaluation stored a forward copy of its read"
+        if written.startswith("incan.engine.edge-in/3\t"):
             assert positions.get(written) == Some(position)
             edges += 1
-    assert edges == 2
+    assert edges == 1
     supersede_outputs(shared, transfer)?
     moved = commit(transfer).map_err((error) => error.message())?
     assert get(moved, key).map_err((error) => error.message())? == Some(encoded)
@@ -183,3 +196,72 @@ pub def test_toolchain_transition_retires_only_previous_profiles_of_the_same_sou
     assert len(readers_of(current, [dependency.key], "checker/18")?) == 1
     assert len(readers_of(older, [dependency.key], "checker/18")?) == 2
     return Ok(None)
+
+
+pub def test_a_reevaluated_slot_keeps_exactly_its_current_reverse_edges() -> Result[None, str]:
+    """
+    Re-evaluating a slot retires its earlier evaluation's reverse edges from that evaluation's receipt: the reverse
+    index then holds the same bytes as a store that only ever made the later evaluation, and no forward copy of a read.
+    Outgoing edges an earlier Oven kept under the slot are read for retirement and deleted with it.
+    """
+    first_input = request("reeval-first-input", RecordSelection.Field("value"))
+    second_input = request("reeval-second-input", RecordSelection.Field("value"))
+    # Each store is its own memory placement, so no evaluation of one reaches another.
+    first = evaluate_slot(seeded(first_input, second_input)?, first_input)?
+    fresh = evaluate_slot(seeded(first_input, second_input)?, second_input)?
+    second = evaluate_slot(first, second_input)?
+    assert len(reverse_index(first)?) == 1, f"first evaluation reverse index {reverse_index(first)?}"
+    assert len(reverse_index(fresh)?) == 1, f"fresh evaluation reverse index {reverse_index(fresh)?}"
+    second_index = reverse_index(second)?
+    assert second_index == reverse_index(fresh)?, f"second {second_index} fresh {reverse_index(fresh)?}"
+    assert reverse_index(second)? != reverse_index(first)?, "re-evaluation kept the earlier reverse index"
+    forward_copies = count_prefix(keys(second).map_err((error) => error.message())?, "incan.engine.edge-out/3\t")
+    assert forward_copies == 0, "an evaluation stored a forward copy of its read"
+
+    # An earlier Oven also kept the first evaluation's read as an outgoing edge under its slot.
+    earlier = evaluate_slot(seeded(first_input, second_input)?, first_input)?
+    output = encode_record_key(key("reeval-owner"))?
+    leftover = "incan.engine.edge-out/3\tprofile\t" + "\t".join(output.split("\t")[:5]) + "\t0"
+    forward = OutgoingEdge(reader=output, profile="profile", kind="present", request=first_input, evidence="earlier")
+    older = commit(put(begin(earlier), leftover, encode_outgoing(forward)?)).map_err((error) => error.message())?
+    migrated = evaluate_slot(older, second_input)?
+    assert get(migrated, leftover).map_err((error) => error.message())? is None, "a leftover outgoing edge stayed"
+    migrated_index = reverse_index(migrated)?
+    assert migrated_index == reverse_index(fresh)?, f"migrated {migrated_index} fresh {reverse_index(fresh)?}"
+    return Ok(None)
+
+
+def seeded(first: RecordRequest, second: RecordRequest) -> Result[Snapshot, str]:
+    """A new memory store holding both fixture inputs."""
+    empty = store_snapshot(memory_root()).map_err((error) => error.message())?
+    inputs = put(begin(empty), encode_record_key(first.key)?, b"first")
+    return commit(put(inputs, encode_record_key(second.key)?, b"second")).map_err((error) => error.message())
+
+
+def evaluate_slot(selected: Snapshot, dependency: RecordRequest) -> Result[Snapshot, str]:
+    """Evaluate the fixture slot reading `dependency` and supersede its earlier output, as a request does."""
+    output = key("reeval-owner")
+    scope = ReadScope(snapshot=selected.digest, profile="profile")
+    preparation = PreparationEvidence(output=output, rank_certificate="rank", selector_witnesses="selectors")
+    source = StoreRecordSource.open(selected, scope, [encode_record_key(dependency.key)?])
+    mut reads = RecordReads.start(scope, preparation, [dependency])
+    match reads.read(source, dependency):
+        RecordRead.Failed(_) => return Err("fixture dependency read failed")
+        _ => pass
+    receipt = reads.finish().map_err((_) => "fixture dependency receipt failed")?
+    mut transaction = begin(selected)
+    rank = ProducerRank(namespace=2, stage=ProducerStage.CheckBody, dependency=3)
+    _ = prepare_evaluation(transaction, "claim-reeval-owner", rank, b"checked reeval-owner", receipt)?
+    supersede_outputs(selected, transaction)?
+    return commit(transaction).map_err((error) => error.message())
+
+
+def reverse_index(selected: Snapshot) -> Result[list[str], str]:
+    """Every reverse edge's key with its exact value bytes."""
+    mut entries: list[str] = []
+    for indexed in keys(selected).map_err((error) => error.message())?:
+        if indexed.startswith("incan.engine.edge-in/3\t"):
+            match get(selected, indexed).map_err((error) => error.message())?:
+                Some(value) => entries.append(indexed + "\n" + hexlify(value))
+                None => return Err("a listed reverse edge has no value")
+    return Ok(entries)

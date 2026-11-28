@@ -289,7 +289,7 @@ pub def test_value_evaluation_and_edges_publish_in_one_generation() -> Result[No
     assert decode_read_receipt(receipt_bytes[:-1].clone()).is_err()
     assert required(before=published.snapshot, key=published.evaluation_key)?[:4] == b"CRMB"
     selected = keys(published.snapshot).map_err((error) => error.message())?
-    assert count_prefix(selected, "incan.engine.edge-out/3\t") == 4
+    assert count_prefix(selected, "incan.engine.edge-out/3\t") == 0
     assert count_prefix(selected, "incan.engine.edge-in/3\t") == 4
     assert published.edge_count == 4
     return Ok(None)
