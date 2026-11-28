@@ -8,6 +8,7 @@
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use incan_driver::session::{CallableBodySource, CompilationSession};
 use incan_driver::unit::{UnitDescription, UnitKind};
@@ -40,7 +41,7 @@ impl CallableBodySource for StoredCallableBodies {
             file = %module.file_path.display())
         .entered();
         let path = self.directory.join(module_key(module));
-        let mut file = std::fs::File::open(path).ok()?;
+        let mut file = std::fs::File::open(&path).ok()?;
         let limit = 64 * 1024 * 1024;
         let length = file.metadata().ok()?.len();
         if length > limit {
@@ -60,7 +61,19 @@ impl CallableBodySource for StoredCallableBodies {
         } else {
             module_identity_for_path(&module.path_segments)
         });
-        let products = super::callable_crumb::decode(&bytes, &owner, &source).ok()?;
+        let reused = decoded().get(&path, &bytes, &owner, &source);
+        let products = match reused {
+            Some(products) => {
+                tracing::debug!(target: "incan::invocation", file = %module.file_path.display(),
+                    "reused decoded callable body products");
+                products
+            }
+            None => {
+                let products = super::callable_crumb::decode(&bytes, &owner, &source).ok()?;
+                decoded().insert(path, bytes, owner, source, products.clone());
+                products
+            }
+        };
         let selection = products
             .select(&module.ast, &module.source, &self.package, &module.path_segments)
             .ok()?;
@@ -223,5 +236,145 @@ fn publish(
     output.flush()?;
     drop(output);
     std::fs::rename(temporary, path)?;
+    decoded().insert(path.to_path_buf(), bytes, module.clone(), source.to_owned(), restored);
     Ok(())
+}
+
+/// Products this driver process decoded or published, by file. A resident driver's next edit reads the file its
+/// previous request published, and the same bytes, module and source decode to the same products, so that decode is
+/// skipped. Any other bytes, module or source decode again.
+static DECODED: Mutex<DecodedProducts<CallableBodyProducts>> = Mutex::new(DecodedProducts::new());
+
+fn decoded() -> MutexGuard<'static, DecodedProducts<CallableBodyProducts>> {
+    DECODED.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Decoded values by file, each with the exact inputs of its decode. Each record is bounded by `RECORD_BYTES` and the
+/// number of files by `FILES`; the least recently stored file is dropped first.
+struct DecodedProducts<T> {
+    entries: Vec<(PathBuf, Decoded<T>)>,
+}
+
+struct Decoded<T> {
+    bytes: Vec<u8>,
+    module: CompilerNodeId,
+    source: String,
+    value: T,
+}
+
+impl<T: Clone> DecodedProducts<T> {
+    const FILES: usize = 256;
+    const RECORD_BYTES: usize = 4 * 1024 * 1024;
+
+    const fn new() -> Self {
+        Self { entries: Vec::new() }
+    }
+
+    /// The value decoded from exactly these bytes for this module and source, if this file's last decode was that.
+    fn get(&self, path: &Path, bytes: &[u8], module: &CompilerNodeId, source: &str) -> Option<T> {
+        self.entries
+            .iter()
+            .find(|(file, decoded)| {
+                file == path && decoded.bytes == bytes && &decoded.module == module && decoded.source == source
+            })
+            .map(|(_, decoded)| decoded.value.clone())
+    }
+
+    /// Replace this file's record with the value decoded from `bytes`.
+    fn insert(&mut self, path: PathBuf, bytes: Vec<u8>, module: CompilerNodeId, source: String, value: T) {
+        self.entries.retain(|(file, _)| file != &path);
+        if bytes.len() > Self::RECORD_BYTES {
+            return;
+        }
+        if self.entries.len() >= Self::FILES {
+            self.entries.remove(0);
+        }
+        self.entries.push((
+            path,
+            Decoded {
+                bytes,
+                module,
+                source,
+                value,
+            },
+        ));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_decode_is_reused_only_for_the_same_file_bytes_module_and_source() {
+        let mut decoded = DecodedProducts::new();
+        let module = CompilerNodeId::module("hello");
+        let path = PathBuf::from("/products/hello.incnitems");
+        decoded.insert(
+            path.clone(),
+            b"CRMB one".to_vec(),
+            module.clone(),
+            "hello.incn".into(),
+            "one".to_owned(),
+        );
+        assert_eq!(
+            decoded.get(&path, b"CRMB one", &module, "hello.incn"),
+            Some("one".to_owned())
+        );
+        assert_eq!(decoded.get(&path, b"CRMB two", &module, "hello.incn"), None);
+        assert_eq!(
+            decoded.get(&path, b"CRMB one", &CompilerNodeId::module("other"), "hello.incn"),
+            None
+        );
+        assert_eq!(decoded.get(&path, b"CRMB one", &module, "other.incn"), None);
+        assert_eq!(
+            decoded.get(
+                Path::new("/products/other.incnitems"),
+                b"CRMB one",
+                &module,
+                "hello.incn"
+            ),
+            None
+        );
+        decoded.insert(
+            path.clone(),
+            b"CRMB two".to_vec(),
+            module.clone(),
+            "hello.incn".into(),
+            "two".to_owned(),
+        );
+        assert_eq!(decoded.get(&path, b"CRMB one", &module, "hello.incn"), None);
+        assert_eq!(
+            decoded.get(&path, b"CRMB two", &module, "hello.incn"),
+            Some("two".to_owned())
+        );
+        let large = vec![0; DecodedProducts::<String>::RECORD_BYTES + 1];
+        decoded.insert(
+            path.clone(),
+            large.clone(),
+            module.clone(),
+            "hello.incn".into(),
+            "large".to_owned(),
+        );
+        assert_eq!(decoded.get(&path, &large, &module, "hello.incn"), None);
+        assert_eq!(decoded.get(&path, b"CRMB two", &module, "hello.incn"), None);
+        for index in 0..=DecodedProducts::<String>::FILES {
+            let file = PathBuf::from(format!("/products/{index}.incnitems"));
+            decoded.insert(
+                file,
+                b"CRMB".to_vec(),
+                module.clone(),
+                "hello.incn".into(),
+                index.to_string(),
+            );
+        }
+        assert_eq!(decoded.entries.len(), DecodedProducts::<String>::FILES);
+        assert_eq!(
+            decoded.get(Path::new("/products/0.incnitems"), b"CRMB", &module, "hello.incn"),
+            None
+        );
+        let last = PathBuf::from(format!("/products/{}.incnitems", DecodedProducts::<String>::FILES));
+        let expected = Some(DecodedProducts::<String>::FILES.to_string());
+        assert_eq!(decoded.get(&last, b"CRMB", &module, "hello.incn"), expected);
+    }
 }
