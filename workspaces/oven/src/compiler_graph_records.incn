@@ -998,11 +998,15 @@ def retire_edges(
             stage_delete(transaction, entry.key)
     note_graph_demand("output-slot", selected, slot)
     if let Some(pointer) = get(selected, slot).map_err((error) => error.message())?:
+        # An authenticated frame can still be bound to another slot or producer: check both, as reuse does.
         reader = read_pointer(pointer)?
+        if output_index_key(profile, reader)? != slot:
+            return Err("compiler output index entry names a record of another slot")
         evaluation = match selected_evaluation(selected, reader, profile)?:
             Some(found) => found
             None => return Err("a selected output has no evaluation to retire its reads from")
         receipt = decode_read_receipt_view(authenticated_receipt(selected, evaluation.receipt_root)?)?
+        validate_receipt_authority(receipt.scope.profile, encode_record_key(receipt.preparation.output)?, evaluation)?
         for read in forward_reads(reader, profile, normalized_edges(receipt.witnesses)?):
             earlier.append(read)
     mut retired: set[str] = set()

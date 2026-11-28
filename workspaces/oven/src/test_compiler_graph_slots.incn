@@ -15,7 +15,7 @@ from pub::internal_models.records import (
     encode_record_key,
 )
 from compiler_graph_record_fixtures import count_prefix, key, request
-from compiler_graph_rows import OutgoingEdge, encode_outgoing
+from compiler_graph_rows import OutgoingEdge, encode_evaluation, encode_outgoing, encode_pointer, read_evaluation
 from std.encoding.hex import hexlify
 from pub::internal_models import (
     CompiledBodyFallback,
@@ -27,6 +27,7 @@ from pub::internal_models import (
 from pub::internal_models.checker_records import CHECKER_PROFILE
 from compiler_graph_records import (
     OutputSlots,
+    evaluation_record_key,
     family_outputs,
     output_replacements,
     prepare_evaluation,
@@ -231,6 +232,45 @@ pub def test_a_reevaluated_slot_keeps_exactly_its_current_reverse_edges() -> Res
     return Ok(None)
 
 
+pub def test_retirement_refuses_a_pointer_or_receipt_bound_to_another_output() -> Result[None, str]:
+    """
+    Retiring a slot reads its selected pointer and the receipt behind it only as reuse would: a pointer naming a
+    record of another slot, or an evaluation whose receipt describes another output, refuses the request instead of
+    retiring someone else's reverse edges.
+    """
+    first_input = request("reeval-first-input", RecordSelection.Field("value"))
+    second_input = request("reeval-second-input", RecordSelection.Field("value"))
+    output = encode_record_key(key("reeval-owner"))?
+    other = encode_record_key(key("reeval-other"))?
+    slot = "incan.engine.output/2\tprofile\t" + "\t".join(output.split("\t")[:5])
+    owned = evaluate_slot(seeded(first_input, second_input)?, first_input)?
+    pointed = evaluate_slot(owned, second_input, "reeval-other")?
+    misbound = commit(put(begin(pointed), slot, encode_pointer(other)?)).map_err((error) => error.message())?
+    match evaluate_slot(misbound, second_input):
+        Ok(_) => return Err("retirement followed a pointer to a record of another slot")
+        Err(message) => assert "another slot" in message, message
+
+    stored = evaluate_slot(seeded(first_input, second_input)?, first_input)?
+    receipted = evaluate_slot(stored, second_input, "reeval-other")?
+    own = read_evaluation(required_bytes(receipted, evaluation_record_key("profile", output))?)?
+    foreign = read_evaluation(required_bytes(receipted, evaluation_record_key("profile", other))?)?
+    rank = ProducerRank(namespace=2, stage=ProducerStage.CheckBody, dependency=3)
+    swapped = encode_evaluation("profile", output, "claim-reeval-owner", own.value_digest, foreign.receipt_root, rank)?
+    crossing = put(begin(receipted), evaluation_record_key("profile", output), swapped)
+    crossed = commit(crossing).map_err((error) => error.message())?
+    match evaluate_slot(crossed, second_input):
+        Ok(_) => return Err("retirement trusted a receipt of another output")
+        Err(message) => assert "does not describe its evaluation" in message, message
+    return Ok(None)
+
+
+def required_bytes(selected: Snapshot, record: str) -> Result[bytes, str]:
+    """One record the fixture store must hold."""
+    match get(selected, record).map_err((error) => error.message())?:
+        Some(value) => return Ok(value)
+        None => return Err(f"fixture store has no {record}")
+
+
 def seeded(first: RecordRequest, second: RecordRequest) -> Result[Snapshot, str]:
     """A new memory store holding both fixture inputs."""
     empty = store_snapshot(memory_root()).map_err((error) => error.message())?
@@ -238,9 +278,9 @@ def seeded(first: RecordRequest, second: RecordRequest) -> Result[Snapshot, str]
     return commit(put(inputs, encode_record_key(second.key)?, b"second")).map_err((error) => error.message())
 
 
-def evaluate_slot(selected: Snapshot, dependency: RecordRequest) -> Result[Snapshot, str]:
-    """Evaluate the fixture slot reading `dependency` and supersede its earlier output, as a request does."""
-    output = key("reeval-owner")
+def evaluate_slot(selected: Snapshot, dependency: RecordRequest, owner: str = "reeval-owner") -> Result[Snapshot, str]:
+    """Evaluate one fixture slot reading `dependency` and supersede its earlier output, as a request does."""
+    output = key(owner)
     scope = ReadScope(snapshot=selected.digest, profile="profile")
     preparation = PreparationEvidence(output=output, rank_certificate="rank", selector_witnesses="selectors")
     source = StoreRecordSource.open(selected, scope, [encode_record_key(dependency.key)?])
@@ -251,7 +291,7 @@ def evaluate_slot(selected: Snapshot, dependency: RecordRequest) -> Result[Snaps
     receipt = reads.finish().map_err((_) => "fixture dependency receipt failed")?
     mut transaction = begin(selected)
     rank = ProducerRank(namespace=2, stage=ProducerStage.CheckBody, dependency=3)
-    _ = prepare_evaluation(transaction, "claim-reeval-owner", rank, b"checked reeval-owner", receipt)?
+    _ = prepare_evaluation(transaction, "claim-" + owner, rank, ("checked " + owner).encode("utf-8"), receipt)?
     supersede_outputs(selected, transaction)?
     return commit(transaction).map_err((error) => error.message())
 
