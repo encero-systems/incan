@@ -26,17 +26,31 @@ pub def write_rows(
     mut budget: Budget,
 ) -> Result[bytes, CrumbError]:
     """Admit and encode one complete row envelope through the native semantic writer."""
-    mut request = RowWriteRequest.new(sealed)
     mut boundary = Budget.create(
         bytes=9223372036854775807,
         elements=9223372036854775807,
         depth=9223372036854775807,
     )?
+    mut encoded: list[tuple[bytes, bool]] = []
     for description in descriptions:
-        request.description(
-            encode(description.metadata, boundary)?,
-            description.mode == DescriptionMode.Inline,
-        )
+        encoded.append((encode(description.metadata, boundary)?, description.mode == DescriptionMode.Inline))
+    return write_encoded_rows(encoded, records, registry, sealed, budget)
+
+
+pub def write_encoded_rows(
+    descriptions: list[tuple[bytes, bool]],
+    records: list[RowRecord],
+    registry: KindRegistry,
+    sealed: bool,
+    mut budget: Budget,
+) -> Result[bytes, CrumbError]:
+    """
+    Write rows as `write_rows` does, with each description's D already encoded and paired with its inline (true) or
+    reference (false) mode. A writer that keeps one description set encodes it once instead of on every row.
+    """
+    mut request = RowWriteRequest.new(sealed)
+    for description in descriptions:
+        request.description(description[0], description[1])
     for registration in registry.registered():
         request.register(registration.kind, registration.shape == NominalKind.Record)
     for record in records:

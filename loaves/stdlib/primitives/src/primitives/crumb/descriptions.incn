@@ -28,6 +28,7 @@ from crate.primitives.crumb.values import Metadata
 from crate.primitives.hex import hexlify
 
 
+@derive(Eq, Hash)
 pub enum DescriptionMode:
     """A writer's explicit choice; changing it changes bytes, never the complete logical description."""
 
@@ -35,6 +36,7 @@ pub enum DescriptionMode:
     Reference
 
 
+@derive(Eq, Hash)
 pub model Description:
     """Untrusted complete metadata plus an explicit physical dictionary mode."""
 
