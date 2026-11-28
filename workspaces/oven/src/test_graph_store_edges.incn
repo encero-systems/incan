@@ -1,5 +1,5 @@
 """Graph records in the segment store: a family selection reads its range, and edges, output index entries, listings
-and incoming entries are written in place across edits; retirement reuses only identical staged forward edges."""
+and incoming entries are written in place across edits; retirement reads only the evaluation it replaces."""
 
 from pub::incan_platform.store.index import entries as index_entries
 from store_path_conversion import store_path
@@ -170,7 +170,8 @@ pub def test_an_edited_declaration_s_edges_replace_their_keys_however_many_edits
     for entry in index_entries(store_path(root), latest.index).map_err((error) => error.detail)?:
         if entry.key.startswith("incan.engine.edge-"):
             edges.append(entry.key)
-    assert len(edges) == 2, f"after 12 edits of one declaration the edge indexes hold {len(edges)} entries"
+    assert len(edges) == 1, f"after 12 edits of one declaration the edge indexes hold {len(edges)} entries"
+    assert edges[0].startswith("incan.engine.edge-in/3\t"), f"the one edge entry is {edges[0]}"
     assert readers_of(latest, [dependency], "profile")? == [reader]
     return Ok(None)
 
@@ -179,7 +180,7 @@ pub def test_an_edge_to_a_record_each_edit_replaces_is_written_in_place() -> Res
     """
     Each edit evaluates a dependency in a new context, and one declaration's slot reads it. The reader's edge into the
     dependency is keyed by the dependency's slot, not by the context the edit replaced, so after any number of edits the
-    edge indexes hold the one current edge in each direction, tombstones included. A reader lookup still names the
+    edge indexes hold the one current reverse edge, tombstones included. A reader lookup still names the
     exact record read: the current dependency has the current reader, and an earlier context has none.
     """
     scratch = scratch_directory()?
@@ -197,7 +198,8 @@ pub def test_an_edge_to_a_record_each_edit_replaces_is_written_in_place() -> Res
         publish_reader(selected, reader, [RecordRequest(key=dependency, selection=RecordSelection.Field("value"))])?
     latest = snapshot(root).map_err((error) => error.message())?
     edges = indexed_keys(root, latest, "incan.engine.edge-")?
-    assert len(edges) == 2, f"after 12 edits of a replaced dependency the edge indexes hold {len(edges)} entries"
+    assert len(edges) == 1, f"after 12 edits of a replaced dependency the edge indexes hold {len(edges)} entries"
+    assert edges[0].startswith("incan.engine.edge-in/3\t"), f"the one edge entry is {edges[0]}"
     assert readers_of(latest, [dependency], "profile")? == [reader]
     assert readers_of(latest, [earlier], "profile")? == []
     return Ok(None)
@@ -222,14 +224,18 @@ pub def test_a_reader_of_two_contexts_of_one_record_is_found_from_each() -> Resu
     ]
     publish_reader(selected, reader, both)?
     latest = snapshot(root).map_err((error) => error.message())?
-    assert readers_of(latest, [first], "profile")? == [reader]
-    assert readers_of(latest, [second], "profile")? == [reader]
+    assert readers_of(latest, [first], "profile")? == [reader], "the first context lost its reader"
+    assert readers_of(latest, [second], "profile")? == [reader], "the second context lost its reader"
     edited = graph_key("body-ir", "function:main", "edit 1")
     publish_reader(latest, edited, [both[1]])?
     current = snapshot(root).map_err((error) => error.message())?
-    assert readers_of(current, [first], "profile")? == []
-    assert readers_of(current, [second], "profile")? == [edited]
-    assert len(indexed_keys(root, current, "incan.engine.edge-")?) == 4
+    assert readers_of(current, [first], "profile")? == [], "the context no longer read kept a reader"
+    assert readers_of(current, [second], "profile")? == [edited], "the context still read lost its reader"
+    # The one current reverse entry and the retired one's tombstone; no read keeps a forward copy.
+    edges = indexed_keys(root, current, "incan.engine.edge-")?
+    assert len(edges) == 2, f"the edge indexes hold {edges}"
+    reverse = [key for key in edges if key.startswith("incan.engine.edge-in/3\t")]
+    assert len(reverse) == 2, f"the edge indexes hold {edges}"
     return Ok(None)
 
 
@@ -321,8 +327,11 @@ pub def test_an_edit_leaves_the_incoming_entry_of_an_unchanged_read_as_it_is() -
     return Ok(None)
 
 
-pub def test_retirement_reuses_only_identical_staged_forward_edges() -> Result[None, str]:
-    """One unchanged edge needs no old frame. A same-width changed edge still retires its old reader."""
+pub def test_retirement_reads_only_the_evaluation_it_replaces() -> Result[None, str]:
+    """
+    Retiring a slot opens its earlier evaluation's output pointer, evaluation and receipt once each, whichever of its
+    reads changed, and no edge frame. A same-width changed read still retires its old reader.
+    """
     before = placed_snapshot(memory_root()).map_err((error) => error.message())?
     reader = graph_key("body-ir", "function:main", "checked")
     requests = [RecordRequest(key=graph_key("final", name, "checked"), selection=RecordSelection.Field("value"))
@@ -340,7 +349,10 @@ pub def test_retirement_reuses_only_identical_staged_forward_edges() -> Result[N
     measure_frame_reads(true)
     supersede_outputs(selected, next)?
     opened = finish_frame_reads()
-    assert len(opened) == 1 and opened[0].reads == 1 and opened[0].key.endswith("\t1")
+    families = sorted([read.key.split("\t")[0] for read in opened])
+    expected = ["incan.engine.evaluation", "incan.engine.output/2", "incan.engine.receipt"]
+    assert families == expected, f"retirement opened {families}"
+    assert len([read for read in opened if read.reads != 1]) == 0, "retirement read a frame twice"
     latest = commit(next).map_err((error) => error.message())?
     assert readers_of(latest, [requests[0].key], "profile")? == [reader]
     assert len(readers_of(latest, [requests[1].key], "profile")?) == 0
