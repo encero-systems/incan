@@ -1,8 +1,9 @@
 //! Bounded public-Crumb row setup shared by the compiler's record models.
+use crate::encoded_descriptions::encoded_descriptions;
 use internal_models_bindings::{
     AbsentPolicy, Budget, Description, DescriptionMode, KindRegistry, MappedView, Metadata, MetadataEntry, RowRecord,
     RowSet, Value, ValueField, binary_message, complete_view, create_budget, crumb_message, empty_registry,
-    mapped_bytes, read_record_at, read_rows, row_count, view_len, write_rows,
+    mapped_bytes, read_record_at, read_rows, row_count, view_len, write_encoded_rows,
 };
 
 const OPERATION_BYTES: i64 = 67_108_864;
@@ -114,10 +115,9 @@ pub fn encode_rows_within(
     budget: &mut Budget,
 ) -> Result<Vec<u8>, String> {
     let registry = empty_registry(budget).map_err(|error| crumb_message(&error))?;
-    // The standard row writer takes its description list by reference.
-    let descriptions = vec![description.clone()];
+    let descriptions = encoded_descriptions(std::slice::from_ref(description))?;
     let encoded =
-        write_rows(&descriptions, &records, &registry, false, budget).map_err(|error| crumb_message(&error))?;
+        write_encoded_rows(&descriptions, &records, &registry, false, budget).map_err(|error| crumb_message(&error))?;
     if encoded.len() as i64 > maximum {
         return Err(format!(
             "encoded Crumb rows need {} bytes, limit {maximum}",
