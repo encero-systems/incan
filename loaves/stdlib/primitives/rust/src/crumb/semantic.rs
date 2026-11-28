@@ -27,6 +27,8 @@ mod row_cursor;
 mod row_entry;
 #[path = "semantic_row_request.rs"]
 mod row_request;
+#[path = "semantic_row_schemas.rs"]
+mod row_schemas;
 #[path = "semantic_row_set.rs"]
 mod row_set;
 #[path = "semantic_row_write.rs"]

@@ -286,6 +286,10 @@ struct AdmittedDictionary {
     elements: u64,
 }
 
+/// Distinct admitted dictionaries one process keeps; a compiler and a settlement each read more than a few families
+/// in turn, so a short window evicted every set before it recurred.
+const RECENT_DICTIONARY_SETS: usize = 64;
+
 static RECENT_DICTIONARIES: std::sync::Mutex<std::collections::VecDeque<AdmittedDictionary>> =
     std::sync::Mutex::new(std::collections::VecDeque::new());
 
@@ -362,7 +366,7 @@ fn admitted_dictionary<'a>(
         let mut recent = RECENT_DICTIONARIES
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if recent.len() == 4 {
+        if recent.len() == RECENT_DICTIONARY_SETS {
             recent.pop_front();
         }
         recent.push_back(saved);
