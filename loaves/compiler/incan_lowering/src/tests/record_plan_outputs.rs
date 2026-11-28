@@ -13,7 +13,7 @@ use incan_mir_plan_native::{
 use crate::plan_modules::{
     AdmittedProduct, PlanAdmissions, PlanModuleSelection, admitted_page, report_admitted, staged_page_reads,
 };
-use crate::record_plan_outputs::{materialized_settled_events, publish_plan_records};
+use crate::record_plan_outputs::{materialized_settled_events, publication_member_visits, publish_plan_records};
 use crate::scalar_store::{ProductEvent, record_scalar_inputs, report_scalar, retain_scalar};
 
 /// One request's product store and report directory, with its producer generation, under a fresh root.
@@ -288,6 +288,7 @@ fn keyed_plan_with_a_generated_runtime_frame_refuses_the_interface() -> Result<(
             .any(|refusal| refusal.function == adapter.name && refusal.refusal.contains("generated function")),
         "an omitted interface did not name its unwitnessed generated function"
     );
+    assert_eq!(publication_member_visits(), 1, "publication revisited its member names");
     Ok(())
 }
 
@@ -537,7 +538,7 @@ fn verify_incomplete_compact_publication() -> Result<(), String> {
     let page = Path::new(&request.products).join(format!("6d{POSITIONED_MODULE_PAGE}"));
     let before = staged_page_reads(&page);
     let settled = publish(&mut request, owner.clone())?;
-    let materialized = materialized_settled_events();
+    let counts = (materialized_settled_events(), publication_member_visits());
     assert_eq!(staged_page_reads(&page), before);
     let name = format!("6d{ADMITTED_MODULE_NOTE}");
     let note = read(&Path::new(&request.products).join("admissions").join(&name))?;
@@ -574,8 +575,9 @@ fn verify_incomplete_compact_publication() -> Result<(), String> {
         Some("plan names no carrier Option_i64 at the place a product reported")
     );
     assert_eq!(
-        materialized, 0,
-        "the incomplete publisher materialized {materialized} settled events"
+        counts,
+        (0, 2),
+        "publication materialized settled events or revisited member names"
     );
     Ok(())
 }

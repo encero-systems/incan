@@ -32,12 +32,19 @@ const INTERFACE_IDENTITY: &str = "native-interface";
 #[cfg(test)]
 thread_local! {
     static MATERIALIZED_SETTLED_EVENTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static PUBLICATION_MEMBER_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// Count admitted report members represented as ordinary events with no encoded product.
 #[cfg(test)]
 pub(crate) fn materialized_settled_events() -> usize {
     MATERIALIZED_SETTLED_EVENTS.with(std::cell::Cell::get)
+}
+
+/// Count member visits by publication after test-only event inspection.
+#[cfg(test)]
+pub(crate) fn publication_member_visits() -> usize {
+    PUBLICATION_MEMBER_VISITS.with(std::cell::Cell::get)
 }
 
 /// Publish loss-checked plan output and a reusable ordinary-entry binding before native compilation.
@@ -60,6 +67,9 @@ pub fn publish_plan_records(
                 .count(),
         );
     });
+    #[cfg(test)]
+    PUBLICATION_MEMBER_VISITS.with(|visits| visits.set(0));
+    let (members, carrier_inputs) = publication.index_members();
     // Every keyed declaration retains its whole-plan function, including in a unit that publishes no interface. Only a
     // unit whose every function has an event can publish one; otherwise no placed product is kept for it.
     let publishable = publication.scalar.len() + publication.settled.len() == plan.functions.len();
@@ -69,14 +79,14 @@ pub fn publish_plan_records(
         plan,
         products,
         report_path,
-        &publication,
+        &members,
         publishable,
         &mut references,
         &mut carried,
     )?;
-    publish_native_definitions(plan, report_path, &publication)?;
+    publish_native_definitions(plan, report_path, &carrier_inputs, &members)?;
     if !publishable {
-        refuse_interface(plan, report, &publication, &carried)?;
+        refuse_interface(plan, report, &members, &carried)?;
         return Ok(publication.compact);
     }
     if keyed.len() != plan.functions.len() {
@@ -102,15 +112,10 @@ pub fn publish_plan_records(
         }
     };
     finish_producer(interface_attempt, "produced");
-    let matches: Vec<_> = publication
-        .members()
-        .filter(|member| member.function() == main)
-        .collect();
-    let [selected] = matches.as_slice() else {
-        return Err("plan-function(entry) has no unique witnessed main function".into());
-    };
-    let selected = selected
-        .event()
+    let selected = members
+        .get(main.as_str())
+        .and_then(|member| *member)
+        .and_then(PublicationMember::event)
         .ok_or("plan-function(entry) has no unique witnessed main function")?;
     let generation =
         std::fs::read_to_string(Path::new(products).join("producer-profile")).map_err(|error| error.to_string())?;
@@ -169,18 +174,21 @@ pub fn publish_plan_records(
 /// in a unit that publishes no whole-unit interface: a helper frame by the key of the product that carries it, any
 /// other function by the digest of its own plan. Each also names the unit's external declarations, which a native body
 /// reads beside its own record. A unit whose every function has an event names none.
-fn publish_native_definitions(plan: &Plan, report: &Path, publication: &AdmittedPublication<'_>) -> Result<(), String> {
-    let named: HashSet<&str> = publication.members().map(PublicationMember::function).collect();
+fn publish_native_definitions(
+    plan: &Plan,
+    report: &Path,
+    carrier_inputs: &[PublicationMember<'_>],
+    members: &PublicationIndex<'_>,
+) -> Result<(), String> {
     // Each helper frame by the key and product digest of the function that carries it.
     let mut carriers: HashMap<String, (String, String)> = HashMap::new();
-    for member in publication.members() {
+    for &member in carrier_inputs {
         let (key, frames, digest): (&str, Cow<'_, [String]>, Cow<'_, str>) = match member {
             PublicationMember::Admitted { product, .. } => (
                 &product.key,
                 Cow::Borrowed(&product.helpers),
                 Cow::Borrowed(&product.digest),
             ),
-            PublicationMember::Scalar(event) if event.role == "entry" => continue,
             PublicationMember::Scalar(event) => {
                 let record = decode_plan_function_record(&event.product)?;
                 (
@@ -199,7 +207,7 @@ fn publish_native_definitions(plan: &Plan, report: &Path, publication: &Admitted
     let externals = semantic_digest(&format!("{:?}", plan.externals)).map_err(|error| error.to_string())?;
     let mut definitions = Vec::new();
     for function in &plan.functions {
-        if named.contains(function.name.as_str()) {
+        if members.contains_key(function.name.as_str()) {
             continue;
         }
         let (key, content) = match carriers.get(&function.name) {
@@ -243,7 +251,7 @@ fn publish_native_definitions(plan: &Plan, report: &Path, publication: &Admitted
 fn refuse_interface(
     plan: &Plan,
     report: &str,
-    publication: &AdmittedPublication<'_>,
+    members: &PublicationIndex<'_>,
     carried: &[String],
 ) -> Result<(), String> {
     for frame in carried {
@@ -257,10 +265,9 @@ fn refuse_interface(
     if !carried.is_empty() || has_scalar_refusal(Path::new(report))? {
         return Ok(());
     }
-    let reported: HashSet<&str> = publication.members().map(PublicationMember::function).collect();
     let mut unwitnessed = 0;
     for function in &plan.functions {
-        if !reported.contains(function.name.as_str()) {
+        if !members.contains_key(function.name.as_str()) {
             report_scalar_refusal(
                 Some(report),
                 &function.name,
@@ -290,18 +297,11 @@ fn keyed_plan_products(
     plan: &Plan,
     products: &str,
     report: &Path,
-    publication: &AdmittedPublication<'_>,
+    members: &PublicationIndex<'_>,
     publishable: bool,
     references: &mut Vec<Vec<NominalReference>>,
     carried: &mut Vec<String>,
 ) -> Result<Vec<Vec<u8>>, String> {
-    let mut event_index = HashMap::new();
-    for member in publication.members() {
-        event_index
-            .entry(member.function())
-            .and_modify(|slot| *slot = None)
-            .or_insert(Some(member));
-    }
     let mut function_indexes: HashMap<&str, usize> = HashMap::new();
     for (index, function) in plan.functions.iter().enumerate() {
         function_indexes.entry(function.name.as_str()).or_insert(index);
@@ -309,7 +309,7 @@ fn keyed_plan_products(
     let base = carrier_base(plan);
     let mut keyed = Vec::new();
     for function in &plan.functions {
-        let Some(slot) = event_index.get(function.name.as_str()).copied() else {
+        let Some(slot) = members.get(function.name.as_str()).copied() else {
             continue;
         };
         let Some(member) = slot else {
@@ -558,17 +558,44 @@ struct AdmittedPublication<'a> {
     compact: Option<CompactAdmissionPin>,
 }
 
+/// Borrowed publication membership. A duplicate name is present but has no unique witness.
+type PublicationIndex<'a> = HashMap<&'a str, Option<PublicationMember<'a>>>;
+
 impl AdmittedPublication<'_> {
+    /// Collect membership and preserve publication order for products that can supply native helper frames.
+    fn index_members(&self) -> (PublicationIndex<'_>, Vec<PublicationMember<'_>>) {
+        let mut members = HashMap::new();
+        let mut carrier_inputs = Vec::new();
+        for member in self.members() {
+            members
+                .entry(member.function())
+                .and_modify(|slot| *slot = None)
+                .or_insert(Some(member));
+            let can_carry_helpers = match member {
+                PublicationMember::Scalar(event) => event.role != "entry",
+                PublicationMember::Admitted { product, .. } => !product.helpers.is_empty(),
+            };
+            if can_carry_helpers {
+                carrier_inputs.push(member);
+            }
+        }
+        (members, carrier_inputs)
+    }
+
     /// The sorted scalar files precede members in their existing module and note order.
     fn members(&self) -> impl Iterator<Item = PublicationMember<'_>> {
-        self.scalar
+        let members = self
+            .scalar
             .iter()
             .map(PublicationMember::Scalar)
             .chain(self.settled.iter().map(|settled| PublicationMember::Admitted {
                 function: settled.function,
                 product: settled.product,
                 event: settled.page_event.map(|index| &self.page_events[index]),
-            }))
+            }));
+        #[cfg(test)]
+        let members = members.inspect(|_| PUBLICATION_MEMBER_VISITS.with(|visits| visits.set(visits.get() + 1)));
+        members
     }
 }
 
