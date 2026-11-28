@@ -279,7 +279,7 @@ def unit_help(surface: str, command: str) -> str:
             options + direct_options(surface) + [
                 "  --argv0 TEXT          Set the program's argument zero.",
                 "  --program-entry PATH  Add a program entry; repeatable.",
-                "  --engine-report       Retain and print unit counters with INCAN_ENGINE=records.",
+                "  --engine-report       Retain and print the records engine's unit counters.",
                 "  --locked              Refuse a missing or stale oven.lock.",
                 "  --                    Pass remaining arguments to the program.",
             ],
@@ -313,7 +313,7 @@ def unit_help(surface: str, command: str) -> str:
             "  --codegraph            Publish an Incan library's checked graph for source-independent inspection.",
             "  --substitute NAME=DIR  Supply a local Rust dependency substitution; repeatable.",
             "  --program-entry PATH   Add a program entry to a program build; repeatable.",
-            "  --engine-report        Retain and print unit counters with INCAN_ENGINE=records.",
+            "  --engine-report        Retain and print the records engine's unit counters.",
             "  --locked               Refuse a missing or stale oven.lock.",
             "  --report json          Print a JSON build report: version, artifacts, outcome and time.",
             "  --report-output PATH   Write the build report to PATH instead of stdout.",
