@@ -75,6 +75,7 @@ pub fn publish_plan_records(
     let publishable = publication.scalar.len() + publication.settled.len() == plan.functions.len();
     let mut references = Vec::new();
     let mut carried = Vec::new();
+    let mut frame_names = HashMap::new();
     let keyed = keyed_plan_products(
         plan,
         products,
@@ -83,8 +84,9 @@ pub fn publish_plan_records(
         publishable,
         &mut references,
         &mut carried,
+        &mut frame_names,
     )?;
-    publish_native_definitions(plan, report_path, &carrier_inputs, &members)?;
+    publish_native_definitions(plan, report_path, &carrier_inputs, &members, &frame_names)?;
     if !publishable {
         refuse_interface(plan, report, &members, &carried)?;
         return Ok(publication.compact);
@@ -174,11 +176,12 @@ pub fn publish_plan_records(
 /// in a unit that publishes no whole-unit interface: a helper frame by the key of the product that carries it, any
 /// other function by the digest of its own plan. Each also names the unit's external declarations, which a native body
 /// reads beside its own record. A unit whose every function has an event names none.
-fn publish_native_definitions(
+fn publish_native_definitions<'a>(
     plan: &Plan,
     report: &Path,
-    carrier_inputs: &[PublicationMember<'_>],
-    members: &PublicationIndex<'_>,
+    carrier_inputs: &[PublicationMember<'a>],
+    members: &PublicationIndex<'a>,
+    frame_names: &ScalarFrameNames<'a>,
 ) -> Result<(), String> {
     // Each helper frame by the key and product digest of the function that carries it.
     let mut carriers: HashMap<String, (String, String)> = HashMap::new();
@@ -191,11 +194,11 @@ fn publish_native_definitions(
             ),
             PublicationMember::Scalar(event) => {
                 let record = decode_plan_function_record(&event.product)?;
-                (
-                    &event.key,
-                    Cow::Owned(product_frame_names(&record.function)?),
-                    Cow::Owned(record.digest),
-                )
+                let frames = match frame_names.get(event.key.as_str()) {
+                    Some((product, names)) if *product == event.product.as_slice() => Cow::Borrowed(names.as_slice()),
+                    _ => Cow::Owned(product_frame_names(&record.function)?),
+                };
+                (&event.key, frames, Cow::Owned(record.digest))
             }
         };
         for frame in frames.iter() {
@@ -293,14 +296,16 @@ fn refuse_interface(
 ///
 /// An admitted product is final already; it is placed at its declaration's positions only for an interface the unit
 /// can publish, the one consumer of those bytes. Otherwise only the helper frames it carries are named.
-fn keyed_plan_products(
+#[allow(clippy::too_many_arguments)]
+fn keyed_plan_products<'a>(
     plan: &Plan,
     products: &str,
     report: &Path,
-    members: &PublicationIndex<'_>,
+    members: &PublicationIndex<'a>,
     publishable: bool,
     references: &mut Vec<Vec<NominalReference>>,
     carried: &mut Vec<String>,
+    frame_names: &mut ScalarFrameNames<'a>,
 ) -> Result<Vec<Vec<u8>>, String> {
     let mut function_indexes: HashMap<&str, usize> = HashMap::new();
     for (index, function) in plan.functions.iter().enumerate() {
@@ -367,7 +372,9 @@ fn keyed_plan_products(
         let resolved = plan_positions(plan, base, &event_references(reported)?)?;
         let nodes = event_positions(reported);
         let mut event = reported.clone();
-        let frames = carried_frames(plan, &function_indexes, &event.product, carried)?;
+        let (frames, names) = carried_frames(plan, &function_indexes, &reported.product)?;
+        carried.extend(names.iter().cloned());
+        frame_names.insert(reported.key.as_str(), (reported.product.as_slice(), names));
         let attempt = enter_producer("compiler", "plan-function-finalize", &event.identity, &event.key);
         let (last, positions, positioned) = finalized_plan_product(
             products,
@@ -442,25 +449,28 @@ fn write(path: &Path, value: &[u8]) -> Result<(), String> {
     std::fs::write(path, value).map_err(|error| error.to_string())
 }
 
-/// Select, in a product's order, the whole-plan helper frames it carries, and record their names.
+/// The helper frame names of each scalar product publication read, by event key, beside the exact product bytes they
+/// were read from; native definitions reuse them only for those same bytes.
+type ScalarFrameNames<'a> = HashMap<&'a str, (&'a [u8], Vec<String>)>;
+
+/// Select, in a product's order, the whole-plan helper frames it carries, with their names.
 fn carried_frames(
     plan: &Plan,
     function_indexes: &HashMap<&str, usize>,
     record: &[u8],
-    carried: &mut Vec<String>,
-) -> Result<Vec<Function>, String> {
+) -> Result<(Vec<Function>, Vec<String>), String> {
     let payload = decode_plan_function_record(record)?.function;
-    let mut frames = Vec::new();
-    for name in product_frame_names(&payload)? {
+    let names = product_frame_names(&payload)?;
+    let mut frames = Vec::with_capacity(names.len());
+    for name in &names {
         let Some(index) = function_indexes.get(name.as_str()) else {
             return Err(format!(
                 "plan-function frame {name} is missing from the whole-program plan"
             ));
         };
         frames.push((*plan.functions[*index]).clone());
-        carried.push(name);
     }
-    Ok(frames)
+    Ok((frames, names))
 }
 
 /// Name each carrier a product reported at its lowering position by its place in the published plan.
