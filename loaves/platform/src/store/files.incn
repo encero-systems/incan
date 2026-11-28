@@ -125,19 +125,42 @@ pub def place_synced(target: Path, data: bytes) -> Result[None, StoreError]:
     return Ok(None)
 
 
-pub def place_selection(root: Path, marker: Option[tuple[Path, bytes]], selection: bytes) -> Result[None, StoreError]:
+pub def place_selection(
+    root: Path, first: bool, marker: tuple[bool, bytes], selection: bytes,
+) -> Result[None, StoreError]:
     """
-    Place `root`'s `CURRENT`, then order the root's entries. With `marker`, place the marker first and order it ahead
-    of `CURRENT`, both under the lifecycle gate a snapshot reader holds, so no reader sees the marker alone.
+    Place `root`'s `CURRENT`, then order the root's entries. When `marker` says `FORMAT` names another format, place
+    `FORMAT` first and order it ahead of `CURRENT`, both under the lifecycle gate a snapshot reader holds.
+
+    A first commit writes its selection as `PENDING` before `FORMAT`, then renames `PENDING` to `CURRENT`, so the two
+    never coexist. A process exit before that rename leaves a store that reads as uncommitted, and a store that loses
+    a `CURRENT` that was once visible has no `PENDING` beside its `FORMAT` and is refused.
     """
-    match marker:
-        None => place_synced(root.joinpath("CURRENT"), selection)?
-        Some(placed) =>
-            ensure_directory(root.joinpath("locks"))?
-            gate = root.joinpath("locks/lifecycle").store_lock_exclusive().map_err((error) => io_failure(root, error))?
-            place_synced(placed[0], placed[1])?
-            sync_directory(root)?
-            place_synced(root.joinpath("CURRENT"), selection)?
+    current = root.joinpath("CURRENT")
+    if marker[0] and not first:
+        place_synced(current, selection)?
+        return sync_directory(root)
+    ensure_directory(root.joinpath("locks"))?
+    gate = root.joinpath("locks/lifecycle").store_lock_exclusive().map_err((error) => io_failure(root, error))?
+    if not first:
+        place_synced(root.joinpath("FORMAT"), marker[1])?
+        sync_directory(root)?
+        place_synced(current, selection)?
+        return sync_directory(root)
+    pending = root.joinpath("PENDING")
+    writing = begin_work()
+    pending.store_write_bytes(selection).map_err((error) => io_failure(pending, error))?
+    record_work(Operation.StoreFileWrite, current.value, writing)
+    publication_boundary("current-written")
+    sync_file(pending)?
+    publication_boundary("current-synced")
+    if not marker[0]:
+        place_synced(root.joinpath("FORMAT"), marker[1])?
+        sync_directory(root)?
+    renaming = begin_work()
+    pending.store_replace(current).map_err((error) => io_failure(current, error))?
+    record_work(Operation.StoreFileRename, current.value, renaming)
+    publication_boundary("current-replaced")
     return sync_directory(root)
 
 
@@ -145,6 +168,8 @@ def publication_kind(target: Path) -> str:
     """Name the durability phase used by the process-exit proof without exposing format details to callers."""
     if target.name() == "CURRENT":
         return "current"
+    if target.name() == "FORMAT":
+        return "format"
     if target.name().endswith(".manifest"):
         return "manifest"
     if target.name() == "delta.seg":
