@@ -8,7 +8,7 @@ The disk placement keeps this layout under its store root; the memory placement 
 format bytes without naming host paths:
 
 - `FORMAT`: the format this store is written in; a store in another format is refused, never read as empty.
-- `PENDING`: a first commit's mark, removed once `CURRENT` is placed; beside it, `FORMAT` alone reads as uncommitted.
+- `PENDING`: a first commit's selection until it is renamed to `CURRENT`; beside it, `FORMAT` reads as uncommitted.
 - `STORE_ID`: the persistent physical bakery identity; moving its locator does not change the store.
 - `CURRENT`: the committed generation and the digest of its manifest; replaced by rename, never edited.
 - `RETAINED`: collection's generation boundary and exact historical view leases; expired descriptors cannot reopen.
