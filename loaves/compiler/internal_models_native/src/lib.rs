@@ -23,7 +23,6 @@ pub mod compiler_contributors;
 pub mod compiler_export;
 pub mod compiler_records;
 pub mod crumb_rows;
-mod encoded_descriptions;
 pub mod graph_crumb_fields;
 mod hex_text;
 mod incan_debug;

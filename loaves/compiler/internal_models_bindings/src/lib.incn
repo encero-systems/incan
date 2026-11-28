@@ -12,7 +12,7 @@ pub from std.primitives.crumb.descriptions import Description, DescriptionMode
 pub from std.primitives.crumb.records import RowRecord
 pub from std.primitives.crumb.registrations import KindRegistry
 pub from std.primitives.crumb.row_reader import RowSet, read_rows
-pub from std.primitives.crumb.row_writer import write_encoded_rows, write_rows
+pub from std.primitives.crumb.row_writer import write_rows
 pub from std.primitives.crumb.row_values import build_value, refusal, settle
 pub from std.primitives.crumb.types import AbsentPolicy
 pub from std.primitives.crumb.values import IntegerValue, MapEntry, Metadata, MetadataEntry, Value, ValueField

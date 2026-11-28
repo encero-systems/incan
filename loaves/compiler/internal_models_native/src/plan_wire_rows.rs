@@ -1,13 +1,12 @@
 //! The graph's native plan profile uses compiler-owned Crumb descriptions for its stored functions and layouts.
 
 use crate::crumb_rows::{ModelField, admit_rows, description_field, entry, operation_budget};
-use crate::encoded_descriptions::encoded_descriptions;
 use crate::graph_crumb_fields::graph_read_budget;
 use internal_models_bindings::{
     Budget, Description, DescriptionMode, MappedView, Metadata, RowAdmission, RowRecord, RowRequest, RowSet, Value,
     binary_message, build_value, charge_bytes, charge_elements, codec_allowance, crumb_message, depth_allowance,
     empty_registry, encode_metadata, read_record_at, refusal, row_count, row_descriptions, settle, view_len,
-    view_request, write_encoded_rows,
+    view_request, write_rows,
 };
 
 const MAX_WIRE_BYTES: i64 = 67_108_864;
@@ -29,9 +28,7 @@ pub(crate) fn write_wire_with_budget(
         key: key.to_vec(),
         value,
     }];
-    let encoded_set = encoded_descriptions(descriptions)?;
-    let encoded =
-        write_encoded_rows(&encoded_set, &rows, &registry, false, budget).map_err(|error| crumb_message(&error))?;
+    let encoded = write_rows(descriptions, &rows, &registry, false, budget).map_err(|error| crumb_message(&error))?;
     if encoded.len() as i64 > MAX_WIRE_BYTES {
         return Err("native plan wire exceeds its byte limit".into());
     }
