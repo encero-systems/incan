@@ -125,6 +125,22 @@ pub def place_synced(target: Path, data: bytes) -> Result[None, StoreError]:
     return Ok(None)
 
 
+pub def place_selection(root: Path, marker: Option[tuple[Path, bytes]], selection: bytes) -> Result[None, StoreError]:
+    """
+    Place `root`'s `CURRENT`, then order the root's entries. With `marker`, place the marker first and order it ahead
+    of `CURRENT`, both under the lifecycle gate a snapshot reader holds, so no reader sees the marker alone.
+    """
+    match marker:
+        None => place_synced(root.joinpath("CURRENT"), selection)?
+        Some(placed) =>
+            ensure_directory(root.joinpath("locks"))?
+            gate = root.joinpath("locks/lifecycle").store_lock_exclusive().map_err((error) => io_failure(root, error))?
+            place_synced(placed[0], placed[1])?
+            sync_directory(root)?
+            place_synced(root.joinpath("CURRENT"), selection)?
+    return sync_directory(root)
+
+
 def publication_kind(target: Path) -> str:
     """Name the durability phase used by the process-exit proof without exposing format details to callers."""
     if target.name() == "CURRENT":

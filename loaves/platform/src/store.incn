@@ -62,6 +62,7 @@ from crate.store.files import (
     index_failure,
     io_failure,
     natural,
+    place_selection,
     place_synced,
     publication_boundary,
     record_work,
@@ -1119,10 +1120,6 @@ def publish_switch(
     record_work(Operation.StoreManifestWrite, manifest.value, writing)
     sync_directory(manifest.parent())?
     publication_boundary("manifest-directory-synced")
-    # The marker names packs before CURRENT can name a graph that holds one: a version that reads only page files then
-    # refuses the store instead of missing its pages.
-    if not marked_current(root)?:
-        place_synced(root.joinpath("FORMAT"), f"{FORMAT}\n".encode("utf-8"))?
     # Order every referenced object and name ahead of CURRENT on stable storage before CURRENT can name the graph.
     # CURRENT's own flush below is the request's one drive flush: it makes the graph and the selection durable
     # together, and a crash before it leaves the previous selection, whose graph was flushed with it.
@@ -1147,8 +1144,11 @@ def publish_switch(
         views=Rc.new(views),
     )
     pinned = pinned_publication(selected, execution_view)?
-    place_synced(root.joinpath("CURRENT"), f"{following} {digest}\n".encode("utf-8"))?
-    sync_directory(root)?
+    # FORMAT names packs before CURRENT names a graph holding one; a first commit places both under the readers' gate.
+    mut marker: Option[tuple[Path, bytes]] = None
+    if not marked_current(root)?:
+        marker = Some((root.joinpath("FORMAT"), f"{FORMAT}\n".encode("utf-8")))
+    place_selection(root, marker, f"{following} {digest}\n".encode("utf-8"))?
     sync_durable(root.joinpath("CURRENT"))?
     publication_boundary("current-durable")
     publication_boundary("root-synced")
