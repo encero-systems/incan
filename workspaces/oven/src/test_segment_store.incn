@@ -948,21 +948,50 @@ def prove_crash_boundaries(base: Path) -> Result[None, str]:
             assert text(lookup(reopened, "b")) == "two"
             assert text(lookup(reopened, "c")) == "three"
     println(f"S1 process-exit matrix: {len(boundaries)} boundaries, 0 partial snapshots")
-    return prove_first_commit_boundaries(base)
+    return prove_first_commit_boundaries(base, boundaries)
 
 
-def prove_first_commit_boundaries(base: Path) -> Result[None, str]:
-    """A store's first commit stopped before its switch reads as an empty store, never as a damaged one."""
-    for boundary in ["manifest-directory-synced", "objects-ordered", "pin-acquired"]:
+def stop_first_commit(root: Path, boundary: str) -> Result[Snapshot, str]:
+    """Stop a fresh root's first commit at `boundary` in a real writer process, then reopen the root."""
+    mut command = proof_command("test_a_commit_interrupted_before_its_switch_leaves_the_last_generation_visible")?
+    command.env("INCAN_STORE_PROOF_CHILD", "crash").env("INCAN_STORE_PROOF_ROOT", root.0)
+    command.env("INCAN_STORE_CRASH_AFTER", boundary)
+    status = command.output().map_err((error) => str(error))?.status
+    stopped: i32 = 86
+    assert status.code() == Some(stopped), f"first-commit boundary {boundary} did not terminate the writer"
+    return snapshot(root).map_err((error) => f"first-commit boundary {boundary}: {error.message()}")
+
+
+def prove_first_commit_boundaries(base: Path, boundaries: list[str]) -> Result[None, str]:
+    """
+    A store's first commit stopped before its `CURRENT` is placed reads as the empty store, and stopped after as its
+    complete first generation, never as a damaged one; the next commit publishes normally. Once `CURRENT` has been
+    visible, losing it is refused, even when no later commit followed.
+    """
+    selected = ["current-replaced", "current-durable", "root-synced"]
+    for boundary in boundaries:
         root = base.joinpath(f"first-{boundary}")
-        mut command = proof_command("test_a_commit_interrupted_before_its_switch_leaves_the_last_generation_visible")?
-        command.env("INCAN_STORE_PROOF_CHILD", "crash").env("INCAN_STORE_PROOF_ROOT", root.0)
-        command.env("INCAN_STORE_CRASH_AFTER", boundary)
-        status = command.output().map_err((error) => str(error))?.status
-        stopped: i32 = 86
-        assert status.code() == Some(stopped), f"first-commit boundary {boundary} did not terminate the writer"
-        reopened = snapshot(root).map_err((error) => f"first-commit boundary {boundary}: {error.message()}")?
-        assert reopened.generation == 0, f"first-commit boundary {boundary} selected {reopened.generation}"
+        reopened = stop_first_commit(root, boundary)?
+        if boundary in selected:
+            assert reopened.generation == 1, f"first-commit boundary {boundary} selected {reopened.generation}"
+            assert text(lookup(reopened, "b")) == "two"
+            assert not root.joinpath("PENDING").is_file(), f"first-commit boundary {boundary} kept PENDING"
+        else:
+            assert reopened.generation == 0, f"first-commit boundary {boundary} selected {reopened.generation}"
+            assert text(lookup(reopened, "b")) == "<absent>"
+        following = write_one(root, "a", "one").map_err((error) => f"after first-commit {boundary}: {error.message()}")?
+        assert following.generation == reopened.generation + 1
+        assert not root.joinpath("PENDING").is_file(), f"the commit after first-commit {boundary} kept PENDING"
+    marked = base.joinpath("first-format-replaced")
+    assert stop_first_commit(marked, "format-replaced")?.generation == 0, "FORMAT without CURRENT was selected"
+    assert write_one(marked, "a", "one").map_err((error) => error.message())?.generation == 1
+    lost = base.joinpath("first-lost-at-current-replaced")
+    stop_first_commit(lost, "current-replaced")?
+    lost.joinpath("CURRENT").unlink().map_err((error) => error.message())?
+    assert error_kind(snapshot(lost)) == "integrity"
+    damaged = base.joinpath("first-current-written")
+    damaged.joinpath("CURRENT").unlink().map_err((error) => error.message())?
+    assert error_kind(snapshot(damaged)) == "integrity"
     return Ok(None)
 
 

@@ -8,6 +8,7 @@ The disk placement keeps this layout under its store root; the memory placement 
 format bytes without naming host paths:
 
 - `FORMAT`: the format this store is written in; a store in another format is refused, never read as empty.
+- `PENDING`: a first commit's selection until it is renamed to `CURRENT`; beside it, `FORMAT` reads as uncommitted.
 - `STORE_ID`: the persistent physical bakery identity; moving its locator does not change the store.
 - `CURRENT`: the committed generation and the digest of its manifest; replaced by rename, never edited.
 - `RETAINED`: collection's generation boundary and exact historical view leases; expired descriptors cannot reopen.
@@ -350,7 +351,7 @@ def registered_snapshot(root: Path, view: str, manifest: Option[Snapshot]) -> Re
     check_format(root)?
     pointer = root.joinpath("CURRENT")
     if not pointer.exists() and not pointer.is_symlink():
-        if root.joinpath("FORMAT").exists():
+        if root.joinpath("FORMAT").exists() and not root.joinpath("PENDING").exists():
             return Err(failure("integrity", pointer.value, "committed store has no CURRENT pointer"))
         return Ok(empty_snapshot(root, view))
     text = pointer.store_read_text("utf-8", "strict").map_err((error) => io_failure(pointer, error))?
@@ -1145,10 +1146,8 @@ def publish_switch(
     )
     pinned = pinned_publication(selected, execution_view)?
     # FORMAT names packs before CURRENT names a graph holding one; a first commit places both under the readers' gate.
-    mut marker: Option[tuple[Path, bytes]] = None
-    if not marked_current(root)?:
-        marker = Some((root.joinpath("FORMAT"), f"{FORMAT}\n".encode("utf-8")))
-    place_selection(root, marker, f"{following} {digest}\n".encode("utf-8"))?
+    marker = (marked_current(root)?, f"{FORMAT}\n".encode("utf-8"))
+    place_selection(root, latest.generation == 0, marker, f"{following} {digest}\n".encode("utf-8"))?
     sync_durable(root.joinpath("CURRENT"))?
     publication_boundary("current-durable")
     publication_boundary("root-synced")
