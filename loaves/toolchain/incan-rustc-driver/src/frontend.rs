@@ -203,6 +203,8 @@ pub(crate) struct Dependencies {
     rustc_args: Vec<String>,
     /// A development executable may link exact native carriers from this immutable store.
     shared_native: Option<PathBuf>,
+    /// The installation's carrier store, home, crates and search-path link tools, which Oven selects.
+    installed_native: crate::native_shared::InstalledNative,
     /// Separate graph-selected checker values supplied by the engine; these bytes never enter the unit description.
     graph_body_records: incan_frontend::checker_records::GraphBodyRecords,
     /// The same project namespaces used by the checker, available for layout publication after checking ends.
@@ -280,6 +282,7 @@ fn parse_dependencies(
     let mut inspection = false;
     let mut rustc_args = Vec::new();
     let mut shared_native = None;
+    let mut installed_native = crate::native_shared::InstalledNative::default();
     let mut graph_body_directory = None;
     let mut graph_body_output = None;
     let mut compile_body_count_report = None;
@@ -305,6 +308,12 @@ fn parse_dependencies(
         match option.as_str() {
             "--rustc-arg" => rustc_args.push(value.clone()),
             "--shared-native" => shared_native = Some(PathBuf::from(value)),
+            "--installed-native" => installed_native.store = Some(PathBuf::from(value)),
+            "--installed-home" => installed_native.home = Some(PathBuf::from(value)),
+            "--installed-extern" => {
+                installed_native.externs.insert(value.clone());
+            }
+            "--link-tool" => installed_native.tools.push(PathBuf::from(value)),
             "--graph-body-records" => graph_body_directory = Some(Path::new(value)),
             "--graph-body-output" => graph_body_output = Some(PathBuf::from(value)),
             "--checked-body-counts" => {
@@ -373,6 +382,7 @@ fn parse_dependencies(
         inspection,
         rustc_args,
         shared_native,
+        installed_native,
         graph_body_records,
         namespace_pages,
         graph_body_output,
@@ -760,6 +770,7 @@ fn compile_unit(
         rustc_args,
         access,
         shared_store: dependencies.shared_native,
+        installed: dependencies.installed_native,
         kind,
         overflow_checks,
         library_facades,

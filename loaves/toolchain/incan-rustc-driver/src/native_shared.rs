@@ -40,40 +40,86 @@ struct Recipe {
     inputs: Inputs,
 }
 
-/// Prepare reached native roots in dependency-compatible order, retaining the runtime across source edits and
-/// building a reached Loaf only when an earlier carrier does not already contain it. Rustc validates all crate
-/// identities again when compiling the executable; no source acceptance or decoded type context is cached here.
+/// What the caller's installation supplies to development carriers. Oven selects it from the home and the toolchain
+/// manifest (`--installed-native`, `--installed-home`, `--installed-extern`, `--link-tool`); this driver only applies
+/// it, because a carrier's recipe and index name the inputs rustc reports while the carrier compiles in this process.
+#[derive(Default, serde::Deserialize, serde::Serialize)]
+pub(crate) struct InstalledNative {
+    /// The home's carrier store. Without it, only the pinned test harness gets a carrier, in the development store.
+    pub(crate) store: Option<PathBuf>,
+    /// The directory an index names files relative to, so a moved home reads its carriers.
+    pub(crate) home: Option<PathBuf>,
+    /// The crates the toolchain manifest installs.
+    pub(crate) externs: BTreeSet<String>,
+    /// Programs rustc runs by search path for a carrier's link, as that invocation selects them.
+    pub(crate) tools: Vec<PathBuf>,
+}
+
+/// Prepare reached installed native roots in dependency-compatible order, building a reached Loaf only when an
+/// earlier carrier does not already contain it. Only the crates the installation provides and the pinned test harness
+/// get a carrier, and the runtime and the harness come first, so every executable of one installation shares their
+/// carriers whatever else it reaches and whatever its sources say. An authored library changes with its sources and
+/// links into the executable, which is linked again anyway, instead of making one more new shared library each edit.
+/// On Darwin a link without a selected SDK leaves rustc to discover one, which no carrier key can name, so such an
+/// executable links its natives statically. Rustc validates all crate identities again when compiling the
+/// executable; no source acceptance or decoded type context is cached here.
 pub(crate) fn libraries(
     roots: BTreeSet<&str>,
     externs: &[(String, PathBuf)],
     directories: &[PathBuf],
     identity: &DriverIdentity,
     store: &Path,
+    installed: &InstalledNative,
 ) -> Result<Vec<(String, PathBuf)>, DriverError> {
-    // ---- Store and dependency-compatible root order ----
-    if !store.is_absolute() {
+    // ---- Carrier store, selected SDK and dependency-compatible root order ----
+    let carriers = installed.store.as_deref().unwrap_or(store);
+    if !store.is_absolute() || !carriers.is_absolute() {
         return Err(refusal("the shared native store must be absolute"));
     }
-    fs::create_dir_all(store).map_err(io_error)?;
+    if identity.target.ends_with("-apple-darwin") && std::env::var_os("SDKROOT").is_none_or(|sdk| sdk.is_empty()) {
+        return Ok(Vec::new());
+    }
+    fs::create_dir_all(carriers).map_err(io_error)?;
     let mut roots = roots.into_iter().collect::<Vec<_>>();
-    roots.sort_by_key(|root| (*root != "incan_native_runtime", *root));
+    roots.sort_by_key(|root| (shared_rank(root), *root));
     let mut shared = Vec::new();
     let mut covered = BTreeSet::new();
 
-    // ---- Reached native implementations ----
+    // ---- Reached installed native implementations ----
     for root in roots {
         let Some(artifact) = native_library(root, externs, identity)? else {
             continue;
         };
         let artifact = artifact.as_ref();
-        if artifact.extension().is_none_or(|extension| extension != "rlib") || covered.contains(artifact) {
+        if artifact.extension().is_none_or(|extension| extension != "rlib")
+            || covered.contains(artifact)
+            || (root != "test" && !installed.externs.contains(root))
+        {
             continue;
         }
-        let library = prepared(root, artifact, externs, directories, identity, store, &shared)?;
+        let library = prepared(
+            root,
+            artifact,
+            externs,
+            directories,
+            identity,
+            carriers,
+            installed,
+            &shared,
+        )?;
         covered.extend(library.inputs.iter().map(|(path, _)| path.clone()));
         shared.push((format!("incan_debug_shared_{}", shared.len()), library.path));
     }
     Ok(shared)
+}
+
+/// Carrier order: the runtime, then the pinned test harness, then installed Loaves by name.
+fn shared_rank(root: &str) -> u8 {
+    match root {
+        "incan_native_runtime" => 0,
+        "test" => 1,
+        _ => 2,
+    }
 }
 
 /// Select an explicit native input, or the pinned test-harness archive that rustc ordinarily injects implicitly.
@@ -147,10 +193,12 @@ fn prepared(
     directories: &[PathBuf],
     identity: &DriverIdentity,
     store: &Path,
+    installed: &InstalledNative,
     shared: &[(String, PathBuf)],
 ) -> Result<Library, DriverError> {
     // ---- Exact recipe and publication lock ----
-    let recipe = recipe(root, artifact, identity, store, shared)?;
+    let home = installed.home.as_deref();
+    let recipe = recipe(root, artifact, identity, store, installed, shared)?;
     let index = store.join(format!("{}.json", recipe.key));
     let lock = File::options()
         .create(true)
@@ -161,7 +209,7 @@ fn prepared(
     lock.lock().map_err(io_error)?;
 
     // ---- Completed native evidence ----
-    if let Some(library) = cached(&index, &recipe) {
+    if let Some(library) = cached(&index, &recipe, home) {
         return Ok(library);
     }
 
@@ -170,7 +218,7 @@ fn prepared(
     let staging = store.join(format!(".staged-{}-{number}", std::process::id()));
     fs::create_dir(&staging).map_err(io_error)?;
     let built = build(root, recipe, externs, directories, identity, store, &staging, shared);
-    let result = built.and_then(|library| publish(store, &index, library));
+    let result = built.and_then(|library| publish(store, &index, library, home));
     // This directory and every file in it belong to this invocation; no completed store entry is removed here.
     let _ = fs::remove_dir_all(&staging);
     result
@@ -182,6 +230,7 @@ fn recipe(
     artifact: &Path,
     identity: &DriverIdentity,
     store: &Path,
+    installed: &InstalledNative,
     shared: &[(String, PathBuf)],
 ) -> Result<Recipe, DriverError> {
     // ---- Pinned compiler and exact native inputs ----
@@ -200,18 +249,23 @@ fn recipe(
         inputs.push(input);
     }
 
-    // ---- Selected SDK ----
+    // ---- Selected SDK, named by the directory it resolves to ----
     let sdk = std::env::var("SDKROOT").unwrap_or_default();
+    let resolved = if sdk.is_empty() {
+        PathBuf::new()
+    } else {
+        fs::canonicalize(&sdk).map_err(io_error)?
+    };
     if !sdk.is_empty() {
-        let sdk_input = observed(Path::new(&sdk))?;
+        let sdk_input = observed(&resolved)?;
         inputs.push(sdk_input.clone());
         system.push(sdk_input);
-        if let Some(parent) = Path::new(&sdk).parent() {
+        if let Some(parent) = resolved.parent() {
             let parent_input = observed(parent)?;
             inputs.push(parent_input.clone());
             system.push(parent_input);
         }
-        let settings = Path::new(&sdk).join("SDKSettings.json");
+        let settings = resolved.join("SDKSettings.json");
         if settings.is_file() {
             let input = observed(&settings)?;
             system_content.push(content_identity(store, &input)?);
@@ -219,14 +273,26 @@ fn recipe(
         }
     }
 
-    // ---- Target and inherited native link configuration ----
-    let environment = ["MACOSX_DEPLOYMENT_TARGET", "DEVELOPER_DIR", "LIBRARY_PATH", "PATH"]
-        .map(|name| (name, std::env::var_os(name)));
+    // ---- Selected link tools, target and inherited native link configuration ----
+    let mut tools = Vec::new();
+    for tool in link_tools(&sdk, &identity.target, installed)? {
+        let input = observed(&tool)?;
+        tools.push(content_identity(store, &input)?);
+        inputs.push(input);
+    }
+    let environment = [
+        "MACOSX_DEPLOYMENT_TARGET",
+        "DEVELOPER_DIR",
+        "LIBRARY_PATH",
+        "TOOLCHAINS",
+    ]
+    .map(|name| (name, std::env::var_os(name)));
     let description = format!(
-        "incan.native-shared/2\n{root}\n{}\n{}\n{}\n{sdk}\n{environment:?}\n{content:?}\n{system:?}\n{system_content:?}",
+        "incan.native-shared/3\n{root}\n{}\n{}\n{}\n{}\n{environment:?}\n{content:?}\n{tools:?}\n{system:?}\n{system_content:?}",
         identity.sysroot.display(),
         identity.toolchain,
-        identity.target
+        identity.target,
+        resolved.display()
     );
     Ok(Recipe {
         key: hex::encode(Sha256::digest(description.as_bytes())),
@@ -234,9 +300,29 @@ fn recipe(
     })
 }
 
+/// The programs a carrier's link runs, as that link selects them, so the caller's raw search path is not itself an
+/// input. On Darwin they are the development linker beside this driver, which rustc runs by path, and the `ld` the
+/// stable linker selects for the SDK. Elsewhere rustc runs the search path's `cc`, which Oven names as an invocation
+/// selects it.
+fn link_tools(sdk: &str, target: &str, installed: &InstalledNative) -> Result<Vec<PathBuf>, DriverError> {
+    if !target.ends_with("-apple-darwin") {
+        return Ok(installed.tools.clone());
+    }
+    let selection = vec!["-syslibroot".to_owned(), sdk.to_owned()];
+    Ok(vec![
+        crate::adapter::development_linker().map_err(io_error)?,
+        crate::adapter::stable_link::linker(&selection, std::env::var_os("TOOLCHAINS").is_some()),
+    ])
+}
+
 /// Reuse only a completed carrier and transitive native inputs whose complete filesystem generations still match.
-fn cached(index: &Path, recipe: &Recipe) -> Option<Library> {
+fn cached(index: &Path, recipe: &Recipe, home: Option<&Path>) -> Option<Library> {
     let (path, stamp, inputs): Record = serde_json::from_slice(&fs::read(index).ok()?).ok()?;
+    let path = located(&path, home);
+    let inputs = inputs
+        .iter()
+        .map(|(input, generation)| (located(input, home), generation.clone()))
+        .collect::<Inputs>();
     let expected = format!("libincan_debug_shared_{}", &recipe.key[..16]);
     if path.file_stem()?.to_str()? != expected || path.parent()?.parent()? != index.parent()? {
         return None;
@@ -389,7 +475,7 @@ fn build(
 }
 
 /// Publish by the completed library's content digest, then atomically install its generation-guarded index.
-fn publish(store: &Path, index: &Path, library: Library) -> Result<Library, DriverError> {
+fn publish(store: &Path, index: &Path, library: Library, home: Option<&Path>) -> Result<Library, DriverError> {
     // ---- Content-addressed native output ----
     let bytes = fs::read(&library.path).map_err(io_error)?;
     let digest = hex::encode(Sha256::digest(&bytes));
@@ -411,7 +497,12 @@ fn publish(store: &Path, index: &Path, library: Library) -> Result<Library, Driv
 
     // ---- Completed recipe witness ----
     let (_, stamp) = observed(&path)?;
-    let record = (path.clone(), stamp, &library.inputs);
+    let inputs = library
+        .inputs
+        .iter()
+        .map(|(input, generation)| (recorded(input, home), generation.clone()))
+        .collect::<Inputs>();
+    let record = (recorded(&path, home), stamp, inputs);
     let bytes = serde_json::to_vec(&record).map_err(|error| refusal(&error.to_string()))?;
     let temporary = index.with_extension(format!("json.{}.tmp", std::process::id()));
     fs::write(&temporary, bytes).map_err(io_error)?;
@@ -420,6 +511,26 @@ fn publish(store: &Path, index: &Path, library: Library) -> Result<Library, Driv
         path,
         inputs: library.inputs,
     })
+}
+
+/// The prefix an index gives a file of the home, so the home's carriers are read again, not derived again, after the
+/// home moves: a move keeps every file's generation and changes only the home's path.
+const HOME_RELATIVE: &str = "$INCAN_HOME";
+
+/// Name a file of the home relative to it in an index; any other file keeps its absolute path.
+fn recorded(path: &Path, home: Option<&Path>) -> PathBuf {
+    match home.and_then(|home| path.strip_prefix(home).ok()) {
+        Some(rest) => Path::new(HOME_RELATIVE).join(rest),
+        None => path.to_path_buf(),
+    }
+}
+
+/// Resolve an index's file against the current home.
+fn located(path: &Path, home: Option<&Path>) -> PathBuf {
+    match (home, path.strip_prefix(HOME_RELATIVE)) {
+        (Some(home), Ok(rest)) => home.join(rest),
+        _ => path.to_path_buf(),
+    }
 }
 
 /// Observe each followed native file; unsupported filesystem observations never authorize reuse.
@@ -468,4 +579,46 @@ fn refusal(message: &str) -> DriverError {
 fn native_input_digest(path: &Path) -> std::io::Result<String> {
     let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::native_input_digest", input = %path.display()).entered();
     crate::adapter::stable_link::file_digest(path)
+}
+
+#[cfg(test)]
+mod relocation_tests {
+    use super::*;
+
+    /// A carrier published in one home is read, not derived again, after that home moves to another path.
+    #[test]
+    fn a_moved_home_reads_its_carriers() -> Result<(), Box<dyn std::error::Error>> {
+        let scratch = tempfile::tempdir()?;
+        let installed = scratch.path().join("install-home");
+        let input = installed.join("toolchains/0.6.0/native/libincan_native_runtime.rlib");
+        let staged = installed.join("cache/native-shared/.staged");
+        fs::create_dir_all(input.parent().ok_or("input has no directory")?)?;
+        fs::create_dir_all(&staged)?;
+        fs::write(&input, b"runtime")?;
+        let key = "0".repeat(64);
+        let name = format!("libincan_debug_shared_{}.dylib", &key[..16]);
+        fs::write(staged.join(&name), b"carrier")?;
+        let store = installed.join("cache/native-shared");
+        let index = store.join(format!("{key}.json"));
+        let library = Library {
+            path: staged.join(&name),
+            inputs: vec![observed(&input)?],
+        };
+        publish(&store, &index, library, Some(&installed))?;
+        assert!(!fs::read_to_string(&index)?.contains(installed.to_str().ok_or("home is not text")?));
+
+        let moved = scratch.path().join("home");
+        fs::rename(&installed, &moved)?;
+        let recipe = Recipe {
+            key,
+            inputs: vec![observed(
+                &moved.join("toolchains/0.6.0/native/libincan_native_runtime.rlib"),
+            )?],
+        };
+        let store = moved.join("cache/native-shared");
+        let read = cached(&store.join(format!("{}.json", recipe.key)), &recipe, Some(&moved))
+            .ok_or("carrier derived again")?;
+        assert!(read.path.starts_with(&store) && read.path.ends_with(&name));
+        Ok(())
+    }
 }
