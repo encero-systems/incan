@@ -23,6 +23,9 @@ from engine_epochs import prepare_admitted_submit, prepare_submit
 from engine_client import service_generation, service_identity
 from pub::incan_platform.store import SnapshotAdmission, Transaction, durable_commits, begin, get, put, commit, commit_group
 from store_path_conversion import compact, snapshot, store_path
+from incan_units import start_view_check
+from rust::std::fs import Permissions, set_permissions
+from rust::std::os::unix::fs import PermissionsExt
 from engine_proofs import report
 from std.json import JsonValue, parse
 from rust::std::process import Child, Command
@@ -54,6 +57,24 @@ from engine_protocol_fixtures import (
     await_connection, await_exit, await_service, detail, json_text_is, launch_service, release_service_result, stop_engine,
 )
 from trace_adapter import count_work, finish_counting
+
+
+pub def test_starting_the_launch_check_of_a_new_view_runs_none_of_its_code() -> Result[None, str]:
+    """A new program view's first-launch check starts without running the program, which then runs as before."""
+    scratch = scratch_directory()?
+    view = scratch.path().joinpath("target/incan/debug/bin/hello")
+    view.parent().mkdir(true, true).map_err((error) => error.message())?
+    observed = scratch.path().joinpath("started")
+    write(view, f"#!/bin/sh\nprintf ran > '{observed.0}'\n")?
+    set_permissions(view.0, Permissions.from_mode(365)).map_err((error) => str(error))?
+    start_view_check(view, "program")
+    assert not observed.exists()
+    status = Command.new(view.0).status().map_err((error) => str(error))?
+    assert status.success()
+    assert observed.exists()
+    # A view that cannot be spawned leaves its check to the launch.
+    start_view_check(scratch.path().joinpath("missing"), "program")
+    return Ok(None)
 
 
 pub def test_a_frame_read_waits_when_the_peer_would_block_between_parts() -> Result[None, str]:

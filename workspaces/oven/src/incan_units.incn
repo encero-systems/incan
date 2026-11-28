@@ -20,6 +20,7 @@ from std.fs import Path
 from std.primitives.locking import LockGuard
 from rust::std::rc import Rc
 from pub::internal_models.executable_body_wire import EXECUTABLE_GRAPH_INPUT
+from pub::incan_platform.children import start_launch_check
 from pub::incan_platform.process_lease import ProcessLease
 from pub::incan_platform.store import Transaction
 from bakery import (
@@ -430,6 +431,7 @@ def bake_executable(
         )
     fact = seal(store, identity, staged, unit.kind, unit_name(unit), reaches, f"incan {unit.kind} {unit.profile}")?
     launch = viewed(store, fact, output, unit.kind, shared)?.launch
+    start_view_check(output, unit.kind)
     return Ok(Made(code=0, launch=launch, evaluations=1, native_bakes=1, identity=identity, warnings=warnings,
         plan_module_selection_digest=completed.plan_module_selection_digest))
 
@@ -558,6 +560,19 @@ pub def view_executable(store: Path, fact: Fact, output: Path, kind: str, shared
     if has_files_under(fact, bundle):
         view_directory(store, fact, debug_bundle(output), bundle)?
     return Ok(None)
+
+
+pub def start_view_check(output: Path, kind: str) -> None:
+    """
+    Start the platform's first-launch check of a newly made executable view, at the path it is launched from, without
+    waiting for it: a launch that follows waits only for what is left of it. The check runs in full and none of the
+    program's code runs; a failure to start it only leaves the check to the launch.
+    """
+    if kind != "program" and kind != "test":
+        return
+    match start_launch_check(output.0):
+        Ok(_) => pass
+        Err(reason) => trace(f"bakery: {reason}")
 
 
 def debug_bundle(binary: Path) -> Path:

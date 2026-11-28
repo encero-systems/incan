@@ -55,7 +55,7 @@ from home import StandardPackage, dependency_artifact_dir
 from owner_endpoint import prepare_directory
 from incan_units import (
     Made, check_prepared, executable_project_root, executable_view, obtain_executable, prepare_project_library,
-    program_binary, view_executable,
+    program_binary, start_view_check, view_executable,
 )
 from project_library import planned_program
 from provider_body_work import ProviderBodyTotal, ProviderBodyWork
@@ -988,11 +988,17 @@ pub def view_sealed(store: Path, sealed: Option[SealedProgram]) -> Result[None, 
     """
     Make the executable view of a unit its request baked. The caller has committed the request: that commit's full
     flush is the seal of the unit's payloads, which were only ordered on storage before it, so no view of them may
-    exist earlier. A request that baked nothing has nothing to view here; its hit was viewed from a sealed fact.
+    exist earlier. A request that baked nothing has nothing to view here; its hit was viewed from a sealed fact. The
+    new view's first-launch check starts at once, so this request's run and any later first launch wait only for what
+    is left of it.
     """
     match sealed:
         None => return Ok(None)
-        Some(program) => return view_executable(store, program.fact, Path(program.binary), "program", program.shared)
+        Some(program) =>
+            binary = Path(program.binary)
+            view_executable(store, program.fact, binary, "program", program.shared)?
+            start_view_check(binary, "program")
+            return Ok(None)
 
 
 def program_home(selected: Option[SelectedHome]) -> Result[ProgramHome, str]:
