@@ -17,10 +17,12 @@ use crate::library_manifest::capabilities::Contributions;
 use crate::library_manifest::compiler_records::RecordFamily;
 use crate::library_manifest::declaration_records::{DeclarationFacet, declaration_facts};
 use crate::library_manifest::executable_surface::{ExecutableSurface, runtime_bindings};
-use crate::library_manifest::install_record::{INSTALL_RECORD_SCHEMA, LoafInstallRecord, PathInstallFacts};
+use crate::library_manifest::install_record::{
+    INSTALL_RECORD_SCHEMA, LoafInstallRecord, PathExecutableValues, PathInstallFacts,
+};
 use crate::library_manifest::type_scope::ModuleTypeScope;
 use crate::library_manifest::{
-    CanonicalIdentityOriginExport, ExportIdentityKind, LIBRARY_MANIFEST_FORMAT, VocabExports,
+    CanonicalIdentityOriginExport, ExportIdentityKind, LIBRARY_MANIFEST_FORMAT, LibraryManifestError, VocabExports,
 };
 use crate::rust_abi_cache::RustAbiCache;
 use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, body_ir::RuntimeCallableBinding};
@@ -423,8 +425,7 @@ impl IndexedLoaf {
             .map_err(Clone::clone)
     }
 
-    /// What executable resolution reads of this Loaf. Installed records supply the surface directly. Path artifacts
-    /// share the projection of their exact admitted manifest across requests.
+    /// What executable resolution reads of this Loaf, from its installed or authenticated path records.
     pub fn executable_surface(&self) -> Result<Arc<ExecutableSurface>, LoafIndexError> {
         self.surface
             .get_or_init(|| {
@@ -438,6 +439,11 @@ impl IndexedLoaf {
                         });
                     }
                     return Ok(surface);
+                }
+                if let Some(surface) =
+                    self.read_path_executable(|values, identity| values.surface(&identity.name, &identity.version))?
+                {
+                    return Ok(Arc::new(surface));
                 }
                 let build = || {
                     let manifest = self.execution_manifest()?;
@@ -457,8 +463,7 @@ impl IndexedLoaf {
             .map_err(Clone::clone)
     }
 
-    /// The runtime callables native lowering binds in this Loaf: its runtime-bindings record, read by name, when the
-    /// installed set publishes one, otherwise derived from the executable projection.
+    /// The runtime callables native lowering binds in this Loaf, from its installed or authenticated path records.
     pub fn runtime_bindings(&self) -> Result<Arc<Vec<RuntimeCallableBinding>>, LoafIndexError> {
         self.bindings
             .get_or_init(|| {
@@ -474,11 +479,38 @@ impl IndexedLoaf {
                     }
                     return Ok(bindings);
                 }
+                if let Some(bindings) = self.read_path_executable(|values, _| values.runtime_bindings())? {
+                    return Ok(Arc::new(bindings));
+                }
                 Ok(Arc::new(runtime_bindings(&*self.execution_manifest()?)))
             })
             .as_ref()
             .map(Arc::clone)
             .map_err(Clone::clone)
+    }
+
+    /// Use the path projection bound to this selection. Only a preceding publisher can lack the projection.
+    fn read_path_executable<T>(
+        &self,
+        read: impl FnOnce(PathExecutableValues<'_>, &LoafIdentity) -> Result<T, LibraryManifestError>,
+    ) -> Result<Option<T>, LoafIndexError> {
+        if self.path_generation.is_none() || !matches!(self.namespace, LoafNamespace::Dependency { .. }) {
+            return Ok(None);
+        }
+        let path = self.dir.join(format!("{}.incnlib", artifact_stem(&self.name)));
+        self.validate_path_generation(&path)?;
+        let Some(facts) = self.path_install_facts()? else {
+            return Ok(None);
+        };
+        let identity = &self.summary()?.identity;
+        let value = facts
+            .executable_values(&self.name)
+            .and_then(|values| values.map(|selected| read(selected, identity)).transpose())
+            .map_err(|error| self.inventory_mismatch(&error.to_string()))?;
+        if value.is_some() {
+            self.validate_path_generation(&path)?;
+        }
+        Ok(value)
     }
 
     /// One declaration's signature, layout or defaults, by its module-qualified name: its own records when the
@@ -843,4 +875,64 @@ fn retain(path: &Path, observation: &Observation, summary: &Summary) -> std::io:
     };
     let payload = internal_models::encode_manifest_inventory(&row).map_err(std::io::Error::other)?;
     manifest_input::write_cache(&cache, "inventory", guard, &summary.identity.digest, payload)
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use crate::library_manifest::LibraryManifest;
+
+    #[test]
+    fn a_path_executable_projection_refuses_manifest_replacement_during_decode()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let _home = manifest_input::select_test_home(root.path());
+        let name = "post_decode_generation_fixture";
+        let manifest_path = root.path().join(format!("{}.incnlib", artifact_stem(name)));
+        let mut manifest = LibraryManifest::new(name, "1.0.0");
+        let install = LoafInstallRecord {
+            schema: INSTALL_RECORD_SCHEMA,
+            ..Default::default()
+        };
+        let install = manifest.prepare_install_record(&install, false)?;
+        let encoded = manifest.to_json_string()?;
+        fs::write(&manifest_path, &encoded)?;
+        fs::write(
+            manifest_path.with_extension("incnfacts"),
+            manifest.encode_loaf_facts(&encoded, Some(install))?,
+        )?;
+        let expected = ExecutableSurface::of(&manifest);
+        let selected = IndexedLoaf::open(
+            name.to_owned(),
+            LoafNamespace::Dependency { key: name.to_owned() },
+            root.path().to_owned(),
+            name,
+        )?;
+
+        let stable =
+            selected.read_path_executable(|values, identity| values.surface(&identity.name, &identity.version))?;
+        assert_eq!(stable.as_ref(), Some(&expected));
+
+        let replacement = manifest_path.with_extension("replacement");
+        manifest.version = "1.0.1".to_owned();
+        fs::write(&replacement, manifest.to_json_string()?)?;
+        let mut replaced = false;
+        let result = selected.read_path_executable(|values, identity| {
+            let surface = values.surface(&identity.name, &identity.version)?;
+            assert_eq!(surface, expected);
+            fs::rename(&replacement, &manifest_path).map_err(|source| LibraryManifestError::Read {
+                path: manifest_path.clone(),
+                source,
+            })?;
+            replaced = true;
+            Ok(surface)
+        });
+        assert!(replaced, "the typed projection did not replace the selected manifest");
+        let Err(LoafIndexError::Unreadable { path, reason }) = &result else {
+            return Err(format!("expected a stale manifest refusal after decode, got {result:?}").into());
+        };
+        assert_eq!(path, &manifest_path);
+        assert_eq!(reason, "the manifest changed after its inventory was admitted");
+        Ok(())
+    }
 }
