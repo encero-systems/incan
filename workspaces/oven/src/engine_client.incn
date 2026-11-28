@@ -18,6 +18,7 @@ from engine_endpoint import connect, owner_uid
 from engine_epochs import probe_submit
 from engine_messages import BindingOutcome, Complete, CompletionStatus, Message, Release, Submit
 from engine_lowering_evidence import ProofSelection
+from engine_program_records import NativeUnit
 from engine_programs import read_program, program_handle, selected_program, restore_program
 from engine_proofs import report
 from overlay_request import OverlayRequest, parse_served
@@ -29,7 +30,7 @@ from incan_units import run_program
 from json_fields import required_text
 from observation import file_metadata, trace
 from pub::incan_platform.store import HOME_VIEW, Snapshot, SnapshotAdmission, begin, commit, fork, get, put, view_snapshot
-from store_path_conversion import ClientStoreAdmission, claim, snapshot, store_path
+from store_path_conversion import ClientStoreAdmission, claim, payload_path, snapshot, store_path
 from toolchain import load_toolchain, toolchain_directory
 from installation_page import admitted_identity_at
 from unit_freshness import compiler_fingerprint, fingerprint
@@ -458,23 +459,19 @@ def execute_in(
     if command == "check" or (command == "build" and absolute.name() == "lib.incn"):
         _ = channel.transport.close()
         return Ok(0)
-    mut binary = ""
-    mut program = ""
-    match read_program(store, complete.result_handles)?:
+    launched = match read_program(store, complete.result_handles)?:
         None => return Err("engine completed without a native descriptor")
-        Some(unit) =>
-            if unit.identity != complete.admission_proof:
-                return Err("engine completion and admitted native identity disagree")
-            binary = unit.binary
-            program = unit.identity
+        Some(unit) => unit
+    if launched.identity != complete.admission_proof:
+        return Err("engine completion and admitted native identity disagree")
     # 3. Complete already holds this caller's execution lease, and the run leases the unit in the bakery until the
     # program exits; the engine never runs or retries user code.
     executing = begin_work()
     mut code: Result[i32, str] = Ok(0)
     if command == "run":
-        code = run_program(Path(binary), arguments, argv0, true, program)
+        code = run_selected(store, launched, arguments, argv0)
     elif output != "":
-        match deliver_program(output, Path(binary)):
+        match deliver_program(output, Path(launched.binary)):
             Ok(_) => pass
             Err(reason) => code = Err(reason)
     record_work(Operation.EngineChild, source.0, executing)
@@ -482,6 +479,21 @@ def execute_in(
     _ = send(channel, request, Message.Release(Release(lease_id=interest)))
     _ = channel.transport.close()
     return code
+
+
+pub def run_selected(store: Path, unit: NativeUnit, arguments: list[str], argv0: Option[str]) -> Result[i32, str]:
+    """
+    Run a selected program from its immutable sealed payload, named as its view. The engine started the payload's
+    first-launch check when it sealed it, so a new program waits only for what is left of that check, and every later
+    run of the same payload is already assessed. The run leases the unit, so the payload stays while the program runs;
+    the program loads its libraries from absolute paths, so where it starts changes nothing else.
+    """
+    if unit.payload == "":
+        return run_program(Path(unit.binary), arguments, argv0, true, unit.identity)
+    name = match argv0:
+        Some(given) => given
+        None => unit.binary
+    return run_program(payload_path(store, unit.payload), arguments, Some(name), true, unit.identity)
 
 
 pub def deliver_program(output: str, binary: Path) -> Result[None, str]:
@@ -561,7 +573,7 @@ def execute_local(
             )
             if command == "run":
                 executing = begin_work()
-                code = run_program(Path(unit.binary), arguments, argv0, true, unit.identity)?
+                code = run_selected(store, unit, arguments, argv0)?
                 record_work(Operation.EngineChild, source.0, executing)
                 return Ok(Some(code))
             return Ok(Some(0))

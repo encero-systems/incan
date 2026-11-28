@@ -20,6 +20,7 @@ from std.fs import Path
 from std.primitives.locking import LockGuard
 from rust::std::rc import Rc
 from pub::internal_models.executable_body_wire import EXECUTABLE_GRAPH_INPUT
+from pub::incan_platform.children import start_launch_check
 from pub::incan_platform.process_lease import ProcessLease
 from pub::incan_platform.store import Transaction
 from bakery import (
@@ -70,6 +71,7 @@ from unit_freshness import Key, unit_key
 from unit_rust import compile_library_unit, prepare_native
 from shared_link import carriers_present, development_link, library_witness, linkage_key
 from jec import begin as begin_work, record as record_work
+from store_path_conversion import payload_path
 from pub::incan_platform.trace import Operation
 
 
@@ -294,7 +296,8 @@ pub def obtain_executable(
 
     The caller reconciled the unit's inputs into `key`, so a resident owner can answer from what it retains.
     Development linkage has its own identity, and every shared library is validated before its fact is used.
-    Execution starts the requested view, so the host's executable-path lookup and the program name agree.
+    A direct execution starts the requested view. An engine run starts the sealed payload under the view's name: the file
+    whose first-launch check began when it was sealed (`start_payload_check`).
 
     1. Reuse a sealed fact with all its shared carriers. If a changed provider shape reached checked callers,
        publish their fresh records even when the native fact is unchanged. Otherwise replay warnings or check a raw-source miss.
@@ -411,6 +414,8 @@ def bake_executable(
             f"incan {unit.kind} {unit.profile}",
         )?
         record_work(Operation.EngineFactSeal, identity, sealing)
+        if unit.kind == "program":
+            start_payload_check(store, prepared.fact, output.name())
         # No view yet: the payloads are ordered on storage but not flushed. The caller's commit is the seal's full
         # flush, and the caller views the fact after it.
         return Ok(
@@ -432,6 +437,20 @@ def bake_executable(
     launch = viewed(store, fact, output, unit.kind, shared)?.launch
     return Ok(Made(code=0, launch=launch, evaluations=1, native_bakes=1, identity=identity, warnings=warnings,
         plan_module_selection_digest=completed.plan_module_selection_digest))
+
+
+def start_payload_check(store: Path, fact: Fact, name: str) -> None:
+    """
+    Start the platform's first-launch check of a program's executable payload while its request still settles and
+    commits. An engine run launches that payload, so the launch waits only for what is left of the check. The check
+    runs in full; a failure to start it only leaves it to the launch.
+    """
+    for file in fact.files:
+        if file.path == name and file.program:
+            match start_launch_check(payload_path(store, file.digest).0):
+                Ok(_) => pass
+                Err(reason) => trace(f"bakery {fact.identity[:12]}: {reason}")
+            return
 
 
 def executable_inputs_match(unit: UnitDescription, toolchain: Toolchain, key: Key, checks: bool) -> Result[bool, str]:

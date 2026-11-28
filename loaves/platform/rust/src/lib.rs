@@ -1,9 +1,10 @@
-//! The platform's only unsafe Rust: sanctioned host clock, resource-probe, storage-barrier and heap-release bindings
-//! behind safe functions.
+//! The platform's only unsafe Rust: sanctioned host clock, resource-probe, storage-barrier, heap-release and
+//! launch-check bindings behind safe functions.
 //!
 //! RFC 005 refuses unsafe Rust calls from Incan. This facet contains only the OS calls needed to expose host-aligned
 //! nanoseconds and process resource readings, the storage barrier a store publication orders its graph with, and the
-//! call that returns freed heap pages to the system, beside the safe registry that reaps the children a long-lived
+//! call that returns freed heap pages to the system, the suspended spawn that starts a new executable's launch
+//! assessment, beside the safe registry that reaps the children a long-lived
 //! process starts and does not wait on; observation, process-tree policy, publication, release policy and encoding stay
 //! in Incan. Neither supported clock advances during suspend or follows wall-clock adjustments. Values
 //! compare across processes on the same host boot.
@@ -60,6 +61,72 @@ pub fn release_free_heap() {
 /// Other systems have no heap release; the call returns nothing to the system.
 #[cfg(not(any(target_os = "macos", all(target_os = "linux", target_env = "gnu"))))]
 pub fn release_free_heap() {}
+
+/// Start the system's first-launch assessment of a new executable without running any of its code.
+///
+/// macOS assesses an executable file at the path it is launched from, the first time it is launched, before the program
+/// starts. Spawning it suspended starts that assessment; the child is then killed and reaped before this returns,
+/// having run nothing, while the assessment completes. A launch of the same path that follows waits only for what is
+/// left of it. The assessment itself is never skipped.
+#[cfg(target_os = "macos")]
+pub fn start_launch_check(executable: &str) -> io::Result<()> {
+    let program = std::ffi::CString::new(executable).map_err(io::Error::other)?;
+    let arguments = [program.as_ptr().cast_mut(), std::ptr::null_mut()];
+    let environment: [*mut libc::c_char; 1] = [std::ptr::null_mut()];
+    let mut attributes: libc::posix_spawnattr_t = std::ptr::null_mut();
+    // SAFETY: `attributes` is a valid location for the attribute object `posix_spawnattr_init` creates.
+    let status = unsafe { libc::posix_spawnattr_init(&raw mut attributes) };
+    if status != 0 {
+        return Err(io::Error::from_raw_os_error(status));
+    }
+    // The child inherits no descriptor: it never runs, so it must not hold any of this process's files or sockets.
+    let flags = libc::c_short::try_from(libc::POSIX_SPAWN_START_SUSPENDED | libc::POSIX_SPAWN_CLOEXEC_DEFAULT)
+        .map_err(io::Error::other)?;
+    let mut pid: libc::pid_t = 0;
+    // SAFETY: the attribute object was initialized above; the path, argument and environment arrays are
+    // NUL-terminated and outlive the call.
+    let spawned = unsafe {
+        let status = libc::posix_spawnattr_setflags(&raw mut attributes, flags);
+        let spawned = if status == 0 {
+            libc::posix_spawn(
+                &raw mut pid,
+                program.as_ptr(),
+                std::ptr::null(),
+                &raw const attributes,
+                arguments.as_ptr(),
+                environment.as_ptr(),
+            )
+        } else {
+            status
+        };
+        libc::posix_spawnattr_destroy(&raw mut attributes);
+        spawned
+    };
+    if spawned != 0 {
+        return Err(io::Error::from_raw_os_error(spawned));
+    }
+    // SAFETY: `pid` names the suspended child this call started and has not reaped.
+    if unsafe { libc::kill(pid, libc::SIGKILL) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    loop {
+        let mut status = 0;
+        // SAFETY: waiting on this call's own child, with a valid status location.
+        if unsafe { libc::waitpid(pid, &raw mut status, 0) } == pid {
+            return Ok(());
+        }
+        let error = io::Error::last_os_error();
+        if error.kind() != io::ErrorKind::Interrupted {
+            return Err(error);
+        }
+    }
+}
+
+/// Other systems assess no executable at its first launch; there is nothing to start.
+#[cfg(not(target_os = "macos"))]
+pub fn start_launch_check(_executable: &str) -> io::Result<()> {
+    Ok(())
+}
 
 /// Read the shared raw monotonic host clock in nanoseconds, excluding time suspended.
 ///
@@ -338,7 +405,7 @@ pub fn retained_children() -> io::Result<usize> {
 
 #[cfg(test)]
 mod tests {
-    use super::{reap_retained_children, retain_child, retained_children};
+    use super::{reap_retained_children, retain_child, retained_children, start_launch_check};
 
     /// A child this process retains instead of waiting on is reaped once it exits, so no zombie outlives it.
     #[test]
@@ -355,5 +422,12 @@ mod tests {
         assert_eq!(reaped, 2, "an exited retained child was not reaped");
         assert_eq!(retained_children()?, before);
         Ok(())
+    }
+
+    /// Starting a launch check spawns and reaps a suspended child; a path that cannot be spawned is an error.
+    #[test]
+    fn a_launch_check_spawns_an_installed_program_and_refuses_a_missing_one() {
+        start_launch_check("/usr/bin/true").expect("an installed program can be spawned suspended");
+        assert!(start_launch_check("/nonexistent/program").is_err());
     }
 }

@@ -1,7 +1,11 @@
 """Children a long-lived process starts and does not wait on: retained so each is reaped once it exits."""
 
 from rust::std::process import Child
-from rust::incan_platform_clock import reap_retained_children as native_reap, retain_child as native_retain
+from rust::incan_platform_clock import (
+    reap_retained_children as native_reap,
+    retain_child as native_retain,
+    start_launch_check as native_start_launch_check,
+)
 
 
 pub def retain_child(child: Child) -> Result[None, str]:
@@ -13,3 +17,13 @@ pub def reap_retained_children() -> Result[int, str]:
     """Reap every retained child that has exited and return how many; a running child stays retained."""
     reaped = native_reap().map_err((error) => f"cannot reap retained children: {error}")?
     return Ok(int(reaped))
+
+
+pub def start_launch_check(executable: str) -> Result[None, str]:
+    """
+    Start the system's first-launch assessment of a new executable at the path it will be launched from, running none
+    of its code; a launch that follows waits only for what is left of it. Systems without one have nothing to start.
+    """
+    return native_start_launch_check(executable).map_err(
+        (error) => f"cannot start the launch check of {executable}: {error}",
+    )
