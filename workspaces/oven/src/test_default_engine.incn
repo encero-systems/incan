@@ -1,0 +1,34 @@
+"""The records engine is the default engine: a command runs on it unless `INCAN_ENGINE` selects the legacy one."""
+
+from rust::std::process import Command
+from rust::std::str import from_utf8
+from std.environ import get_or
+from files import write
+from lowering_record_fixtures import command_proof, proof_count, stop_example_engine
+from scratch import scratch_directory
+
+
+pub def test_a_command_runs_on_the_records_engine_by_default() -> Result[None, str]:
+    """Without `INCAN_ENGINE`, a run is a records request: its engine report is one JSON line before the program's output."""
+    scratch = scratch_directory()?
+    root = scratch.path()
+    source = root.joinpath("hello.incn")
+    write(source, "def main() -> None:\n    println(\"hello\")\n")?
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    store = root.joinpath("store")
+    outcome = Command
+        .new(binary)
+        .arg("run")
+        .arg(source.0)
+        .arg("--engine-report")
+        .env_remove("INCAN_ENGINE")
+        .env("INCAN_BAKERY", store.0)
+        .output()
+        .map_err((error) => str(error))?
+    output = from_utf8(outcome.stdout).map_err((error) => str(error))?
+    errors = from_utf8(outcome.stderr).map_err((error) => str(error))?
+    if not outcome.status.success() or not output.endswith("hello\n"):
+        return Err(f"default run: status={outcome.status.code()} stdout={output} stderr={errors}")
+    report = command_proof(outcome.stdout)?
+    assert proof_count(report, "unit_evaluations")? == 1, output
+    return stop_example_engine(binary, store)
