@@ -179,15 +179,20 @@ pub struct CompilerRecordSet {
     pub digests: FactDigests,
 }
 
-/// The install value and its independently addressed checked API records, prepared together by the Loaf producer.
+/// The install value and its independently addressed records, prepared together by the Loaf producer.
 pub struct PreparedInstallRecord {
     record: CompilerRecord,
-    named: Vec<CompilerRecord>,
-    lookup: Option<String>,
+    named: PreparedNamedRecords,
+    lookup: String,
+}
+
+struct PreparedNamedRecords {
+    api: Vec<CompilerRecord>,
+    executable: Vec<CompilerRecord>,
 }
 
 impl LibraryManifest {
-    /// Bind the checked install value and named API receipt to the manifest. The ABI flag records that this
+    /// Bind the checked install value and named record receipt to the manifest. The ABI flag records that this
     /// producer included its explicit Rust re-exports in the manifest-selected ABI index.
     pub fn prepare_install_record(
         &mut self,
@@ -198,16 +203,22 @@ impl LibraryManifest {
         struct InstallValue<'a> {
             #[serde(flatten)]
             install: &'a LoafInstallRecord,
-            #[serde(skip_serializing_if = "Option::is_none")]
-            path_lookup_digest: Option<String>,
+            path_lookup_digest: String,
             #[serde(skip_serializing_if = "std::ops::Not::not")]
             indexed_rust_reexports: bool,
             #[serde(skip_serializing_if = "Option::is_none")]
             rust_reexport_manifest_format: Option<u32>,
         }
 
-        let named = api_records(&self.contract_metadata, &self.name)?;
-        let lookup = (!named.is_empty()).then(|| encode_path_lookup(&named)).transpose()?;
+        let named = PreparedNamedRecords {
+            api: api_records(&self.contract_metadata, &self.name)?,
+            executable: self.executable_records()?,
+        };
+        let executable = named
+            .executable
+            .iter()
+            .filter(|row| row.family != RecordFamily::RuntimeBinding);
+        let lookup = encode_path_lookup(named.api.iter().chain(executable))?;
         let indexed_namespaces = self
             .contract_metadata
             .api
@@ -215,7 +226,7 @@ impl LibraryManifest {
             .is_some_and(|api| !api.public_namespaces.is_empty());
         let value = InstallValue {
             install,
-            path_lookup_digest: lookup.as_ref().map(|records| sha256_hex(records.as_bytes())),
+            path_lookup_digest: sha256_hex(lookup.as_bytes()),
             indexed_rust_reexports,
             rust_reexport_manifest_format: (indexed_rust_reexports && indexed_namespaces)
                 .then_some(self.manifest_format),
@@ -239,7 +250,7 @@ impl LibraryManifest {
                     Some(install.record),
                     Some(published),
                     Some(install.named),
-                    install.lookup,
+                    Some(install.lookup),
                 )
             }
             None => (None, None, None, None),
@@ -276,12 +287,12 @@ impl LibraryManifest {
         self.compiler_records_with_named_install(manifest_digest, install, None)
     }
 
-    /// Use the producer's prepared API rows if this publication already projected them.
+    /// Reuse the producer's API and executable rows when this publication already projected them.
     fn compiler_records_with_named_install(
         &self,
         manifest_digest: &str,
         install: Option<CompilerRecord>,
-        prepared_api: Option<Vec<CompilerRecord>>,
+        prepared: Option<PreparedNamedRecords>,
     ) -> Result<CompilerRecordSet, LibraryManifestError> {
         let mut records = self.declaration_records()?;
         let (mut contract_facts, documentation) = self.contract_metadata.split_documentation();
@@ -306,14 +317,30 @@ impl LibraryManifest {
         }
         records.push(record(RecordFamily::ContractMetadata, 0, &self.name, &contract_facts)?);
         // A consumer reads one declaration's signature, layout or defaults by name, never the whole checked API.
-        records.extend(match prepared_api {
-            Some(records) => records,
-            None => api_records(&contract_facts, &self.name)?,
-        });
+        let (api, executable) = match prepared {
+            Some(PreparedNamedRecords { api, executable }) => (api, executable),
+            None => (api_records(&contract_facts, &self.name)?, self.executable_records()?),
+        };
+        records.extend(api);
         if !documentation.is_empty() {
             records.push(record(RecordFamily::Documentation, 0, &self.name, &documentation)?);
         }
-        // Executable resolution reads these two, never the whole contract metadata (RFC 179).
+        records.extend(executable);
+        if let Some(rust_abi) = &self.rust_abi {
+            records.push(record(RecordFamily::RustAbi, 0, &self.name, rust_abi)?);
+        }
+        let metadata = self.metadata_value(manifest_digest);
+        let digests = digests(&records, &self.name, &metadata)?;
+        let mut stored = metadata;
+        stored.insert("record_content_digest".to_owned(), json!(digests.record_content));
+        stored.insert("semantic_facts_digest".to_owned(), json!(digests.semantic_facts));
+        records.insert(0, record(RecordFamily::Metadata, 0, &self.name, &stored)?);
+        Ok(CompilerRecordSet { records, digests })
+    }
+
+    /// Project the records executable resolution and native lowering need from a Loaf (RFC 179).
+    fn executable_records(&self) -> Result<Vec<CompilerRecord>, LibraryManifestError> {
+        let mut records = Vec::new();
         if let Some(descriptor) = &self.contract_metadata.executable_representation {
             records.push(record(RecordFamily::ExecutableDescriptor, 0, &self.name, descriptor)?);
         }
@@ -326,16 +353,7 @@ impl LibraryManifest {
                 &binding.path
             })?;
         }
-        if let Some(rust_abi) = &self.rust_abi {
-            records.push(record(RecordFamily::RustAbi, 0, &self.name, rust_abi)?);
-        }
-        let metadata = self.metadata_value(manifest_digest);
-        let digests = digests(&records, &self.name, &metadata)?;
-        let mut stored = metadata;
-        stored.insert("record_content_digest".to_owned(), json!(digests.record_content));
-        stored.insert("semantic_facts_digest".to_owned(), json!(digests.semantic_facts));
-        records.insert(0, record(RecordFamily::Metadata, 0, &self.name, &stored)?);
-        Ok(CompilerRecordSet { records, digests })
+        Ok(records)
     }
 
     /// One record per exported declaration, made-private type, vocabulary and soft-keyword activation.

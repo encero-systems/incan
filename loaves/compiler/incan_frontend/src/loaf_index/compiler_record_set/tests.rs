@@ -13,6 +13,7 @@ use std::path::Path;
 
 use sha2::{Digest, Sha256};
 
+use super::super::lazy_entry::IndexedLoaf;
 use super::declaration_records::read_declaration_in;
 use super::runtime_bindings::read_runtime_bindings_in;
 use super::thread_selection;
@@ -22,7 +23,11 @@ use super::{
 use crate::api_metadata::{
     CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadataPackage, collect_checked_api_metadata,
 };
+use crate::library_manifest::compiler_records::{CompilerRecord, RecordFamily};
 use crate::library_manifest::executable_surface::{ExecutableSurface, runtime_bindings};
+use crate::library_manifest::install_record::{
+    INSTALL_RECORD_SCHEMA, LOAF_FACTS_SCHEMA, LoafInstallRecord, PublishedInstallRecord,
+};
 use crate::library_manifest::{ExecutableRepresentationExport, LibraryContractMetadata, LibraryManifest};
 use crate::test_rows::{MutRow, run_rows};
 
@@ -648,105 +653,24 @@ const TESTS_TEMPDIR_CASES: &[MutRow<tempfile::TempDir, Box<dyn std::error::Error
             Ok(())
         },
     },
-    // In records mode a dependency Loaf outside the installed set keeps its ordinary artifact contract, retained
-    // generation-bound inventory included: the first request's session reads its manifest whole and retains the
-    // inventory, and a later request's session (a parsing session asks only for vocabulary) opens it from the
-    // inventory without reading the manifest again.
+    // A path Loaf outside the installed set reuses its admitted inventory. An executable projection can reopen
+    // after settlement, while a preceding publisher keeps its generation-guarded manifest and surface behavior.
     MutRow {
         name: "a_dependency_outside_the_installed_set_opens_from_its_retained_inventory",
         check: |root| {
             let home = tempfile::tempdir()?;
             let _home = super::super::manifest_input::select_test_home(home.path());
             let _selected = thread_selection::select(RecordSet::new(root.path().join("installed"), Vec::new()));
-            let directory = root.path().join("dependency");
-            fs::create_dir(&directory)?;
-            let project_record = crate::library_manifest::install_record::LoafInstallRecord {
-                schema: crate::library_manifest::install_record::INSTALL_RECORD_SCHEMA,
+            let project_record = LoafInstallRecord {
+                schema: INSTALL_RECORD_SCHEMA,
                 ..Default::default()
             };
-            let mut manifest = LibraryManifest::new("dependency", "1.0.0");
-            let install = manifest.prepare_install_record(&project_record, false)?;
-            let manifest_path = directory.join("dependency.incnlib");
-            let encoded = manifest.to_json_string()?;
-            fs::write(&manifest_path, &encoded)?;
-            fs::write(
-                manifest_path.with_extension("incnfacts"),
-                manifest.encode_loaf_facts(&encoded, Some(install))?,
-            )?;
-            let open = || {
-                super::super::lazy_entry::IndexedLoaf::open(
-                    "dependency".to_owned(),
-                    crate::loaf_index::LoafNamespace::Dependency {
-                        key: "dependency".to_owned(),
-                    },
-                    directory.clone(),
-                    "dependency",
-                )
-            };
-            let first = open()?;
-            assert!(
-                first.was_demanded(),
-                "the first session admitted no inventory before reading"
-            );
-            let surface = first.executable_surface()?;
-            crate::loaf_index::settle_retained_loaves(true);
-            let later = open()?;
-            assert!(
-                !later.was_demanded(),
-                "a later session read the unchanged manifest whole again"
-            );
-            assert!(!later.globals.vocabulary);
-            assert_eq!(later.summary()?.identity, first.summary()?.identity);
-            let selected = later.install_record()?.ok_or("the local Loaf has an install record")?;
-            assert_eq!(selected.as_ref(), &project_record);
-            assert!(
-                !later.was_demanded(),
-                "the admitted install digest must avoid a whole local manifest decode"
-            );
-            let warm_surface = later.executable_surface()?;
-            assert!(
-                !later.was_demanded(),
-                "unchanged executable admission demanded the whole path manifest again"
-            );
-            assert!(
-                std::sync::Arc::ptr_eq(&surface, &warm_surface),
-                "unchanged executable admission rebuilt the same surface"
-            );
-
-            let full = crate::loaf_index::LoafArtifact::read(&directory, "dependency")?;
-            crate::loaf_index::settle_retained_loaves(true);
-            let warm = crate::loaf_index::LoafArtifact::read(&directory, "dependency")?;
-            assert_eq!(full.identity, warm.identity);
-            assert!(
-                std::sync::Arc::ptr_eq(&full.manifest, &warm.manifest),
-                "a full local manifest demanded on the unchanged generation was decoded again"
-            );
-
-            let old_selection = open()?;
-            assert!(!old_selection.was_demanded());
-            let modified = fs::metadata(&manifest_path)?.modified()?;
-            let replacement = encoded.replacen("\"1.0.0\"", "\"1.0.1\"", 1);
-            assert_ne!(replacement, encoded);
-            assert_eq!(replacement.len(), encoded.len());
-            fs::write(&manifest_path, replacement)?;
-            fs::File::options()
-                .write(true)
-                .open(&manifest_path)?
-                .set_times(std::fs::FileTimes::new().set_modified(modified))?;
-            assert!(
-                old_selection.install_record().is_err_and(|error| error
-                    .to_string()
-                    .contains("the manifest changed after its inventory was admitted")),
-                "a same-size replacement with restored mtime may not reuse the previous manifest's selected install value"
-            );
-            assert!(old_selection.executable_surface().is_err());
-            let changed_surface = open()?.executable_surface()?;
-            assert_eq!(changed_surface.version, "1.0.1");
-            assert!(!std::sync::Arc::ptr_eq(&surface, &changed_surface));
-            let changed = crate::loaf_index::LoafArtifact::read(&directory, "dependency")?;
-            assert_eq!(changed.manifest.version, "1.0.1");
-            assert_ne!(changed.identity.digest, full.identity.digest);
-            Ok(())
+            let preceding = root.path().join("preceding");
+            fs::create_dir(&preceding)?;
+            check_preceding_path_install(&preceding, &project_record)?;
+            let projected = root.path().join("projected");
+            fs::create_dir(&projected)?;
+            check_released_path_install(&projected, &project_record)
         },
     },
     // A record group decoded for one request is shared inside it and released when the request ends, as the Loaf
@@ -796,3 +720,222 @@ const TESTS_TEMPDIR_CASES: &[MutRow<tempfile::TempDir, Box<dyn std::error::Error
         },
     },
 ];
+
+/// Open the same named dependency outside the selected installed set.
+fn open_path_dependency(directory: &Path) -> Result<IndexedLoaf, crate::loaf_index::LoafIndexError> {
+    IndexedLoaf::open(
+        "dependency".to_owned(),
+        crate::loaf_index::LoafNamespace::Dependency {
+            key: "dependency".to_owned(),
+        },
+        directory.to_owned(),
+        "dependency",
+    )
+}
+
+/// Reproduce the preceding no-API install value and sidecar. The current publisher also emits executable records.
+fn write_preceding_path_install(
+    path: &Path,
+    manifest: &mut LibraryManifest,
+    project_record: &LoafInstallRecord,
+) -> Result<usize, Box<dyn std::error::Error>> {
+    let record = CompilerRecord {
+        family: RecordFamily::InstallRecord,
+        index: 0,
+        name: manifest.name.clone(),
+        value: LibraryManifest::encode_compiler_record_value(project_record)?,
+    };
+    manifest.contract_metadata.install_record_digest = Some(content_name(&record.value));
+    let encoded = manifest.to_json_string()?;
+    let manifest_digest = content_name(encoded.as_bytes());
+    let published = PublishedInstallRecord::new(&record);
+    let digests = manifest
+        .compiler_records_with_install(&manifest_digest, Some(record))?
+        .digests;
+    let facts = serde_json::json!({
+        "schema": LOAF_FACTS_SCHEMA,
+        "manifest_digest": manifest_digest,
+        "semantic_facts": digests.semantic_facts,
+        "record_content": digests.record_content,
+        "install_record": published,
+    });
+    fs::write(path, &encoded)?;
+    fs::write(path.with_extension("incnfacts"), serde_json::to_vec(&facts)?)?;
+    Ok(encoded.len())
+}
+
+/// Keep the preceding publisher's surface and manifest identities on the same generation and refuse a stale lease.
+fn check_preceding_path_install(
+    directory: &Path,
+    project_record: &LoafInstallRecord,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let path = directory.join("dependency.incnlib");
+    let mut manifest = LibraryManifest::new("dependency", "1.0.0");
+    let encoded_len = write_preceding_path_install(&path, &mut manifest, project_record)?;
+    let first = open_path_dependency(directory)?;
+    assert!(
+        first.was_demanded(),
+        "the first session admitted no inventory before reading"
+    );
+    let surface = first.executable_surface()?;
+    crate::loaf_index::settle_retained_loaves(true);
+    let later = open_path_dependency(directory)?;
+    assert!(
+        !later.was_demanded(),
+        "a later session read the unchanged manifest whole again"
+    );
+    assert!(!later.globals.vocabulary);
+    assert_eq!(later.summary()?.identity, first.summary()?.identity);
+    let selected = later
+        .install_record()?
+        .ok_or("the preceding Loaf has an install record")?;
+    assert_eq!(selected.as_ref(), project_record);
+    assert!(
+        !later.was_demanded(),
+        "the admitted install digest must avoid a whole local manifest decode"
+    );
+    let warm_surface = later.executable_surface()?;
+    assert!(
+        !later.was_demanded(),
+        "unchanged executable admission demanded the whole path manifest again"
+    );
+    assert!(
+        std::sync::Arc::ptr_eq(&surface, &warm_surface),
+        "unchanged executable admission rebuilt the same surface"
+    );
+
+    let full = crate::loaf_index::LoafArtifact::read(directory, "dependency")?;
+    crate::loaf_index::settle_retained_loaves(true);
+    let warm = crate::loaf_index::LoafArtifact::read(directory, "dependency")?;
+    assert_eq!(full.identity, warm.identity);
+    assert!(
+        std::sync::Arc::ptr_eq(&full.manifest, &warm.manifest),
+        "a full local manifest demanded on the unchanged generation was decoded again"
+    );
+
+    let old_selection = open_path_dependency(directory)?;
+    assert!(!old_selection.was_demanded());
+    let modified = fs::metadata(&path)?.modified()?;
+    manifest.version = "1.0.1".to_owned();
+    assert_eq!(
+        write_preceding_path_install(&path, &mut manifest, project_record)?,
+        encoded_len
+    );
+    fs::File::options()
+        .write(true)
+        .open(&path)?
+        .set_times(std::fs::FileTimes::new().set_modified(modified))?;
+    assert!(
+        old_selection.install_record().is_err_and(|error| error
+            .to_string()
+            .contains("the manifest changed after its inventory was admitted")),
+        "a same-size replacement with restored mtime may not reuse the previous manifest's selected install value"
+    );
+    assert!(old_selection.executable_surface().is_err());
+    let changed_surface = open_path_dependency(directory)?.executable_surface()?;
+    assert_eq!(changed_surface.version, "1.0.1");
+    assert!(!std::sync::Arc::ptr_eq(&surface, &changed_surface));
+    let changed = crate::loaf_index::LoafArtifact::read(directory, "dependency")?;
+    assert_eq!(changed.manifest.version, "1.0.1");
+    assert_ne!(changed.identity.digest, full.identity.digest);
+    Ok(())
+}
+
+/// Check the published executable values after releasing the request and decoded views.
+fn check_released_path_install(
+    directory: &Path,
+    project_record: &LoafInstallRecord,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let path = directory.join("dependency.incnlib");
+    let facts_path = path.with_extension("incnfacts");
+    let publish = |manifest: &mut LibraryManifest| -> Result<usize, Box<dyn std::error::Error>> {
+        let install = manifest.prepare_install_record(project_record, false)?;
+        let encoded = manifest.to_json_string()?;
+        fs::write(&path, &encoded)?;
+        fs::write(&facts_path, manifest.encode_loaf_facts(&encoded, Some(install))?)?;
+        Ok(encoded.len())
+    };
+    let mut manifest = surfaced_library_for("dependency", "pub def price() -> int:\n    return 1999\n")?;
+    manifest.contract_metadata.api = None;
+    let encoded_len = publish(&mut manifest)?;
+    let surface = ExecutableSurface::of(&manifest);
+    let bindings = runtime_bindings(&manifest);
+    assert!(surface.descriptor.is_some() && !surface.public_identities.is_empty() && !bindings.is_empty());
+
+    let first = open_path_dependency(directory)?;
+    assert!(
+        first.was_demanded(),
+        "the first session admitted no inventory before reading"
+    );
+    let identity = first.summary()?.identity.clone();
+    assert_eq!(*first.executable_surface()?, surface);
+    assert_eq!(*first.runtime_bindings()?, bindings);
+    drop(first);
+    crate::loaf_index::release_retained_loaves();
+    assert!(!super::super::retained::retains_artifact(directory, "dependency"));
+
+    let later = open_path_dependency(directory)?;
+    assert!(
+        !later.was_demanded(),
+        "a later session read the unchanged manifest whole again"
+    );
+    assert!(!later.globals.vocabulary);
+    assert_eq!(later.summary()?.identity, identity);
+    let selected = later.install_record()?.ok_or("the local Loaf has an install record")?;
+    assert_eq!(selected.as_ref(), project_record);
+    assert!(
+        !later.was_demanded(),
+        "the admitted install digest must avoid a whole local manifest decode"
+    );
+    assert_eq!(*later.executable_surface()?, surface);
+    assert_eq!(*later.runtime_bindings()?, bindings);
+    assert!(
+        !later.was_demanded(),
+        "unchanged executable admission demanded the whole path manifest again"
+    );
+    drop(later);
+    crate::loaf_index::release_retained_loaves();
+
+    let facts = fs::read(&facts_path)?;
+    let mut corrupt: serde_json::Value = serde_json::from_slice(&facts)?;
+    corrupt["path_named_records"] = "{}".into();
+    fs::write(&facts_path, serde_json::to_vec(&corrupt)?)?;
+    assert!(
+        open_path_dependency(directory)?
+            .executable_surface()
+            .is_err_and(|error| {
+                error
+                    .to_string()
+                    .contains("disagree with their selected content identity")
+            })
+    );
+    fs::write(&facts_path, facts)?;
+
+    let old_selection = open_path_dependency(directory)?;
+    assert!(!old_selection.was_demanded());
+    let modified = fs::metadata(&path)?.modified()?;
+    manifest.version = "0.1.1".to_owned();
+    assert_eq!(publish(&mut manifest)?, encoded_len);
+    fs::File::options()
+        .write(true)
+        .open(&path)?
+        .set_times(std::fs::FileTimes::new().set_modified(modified))?;
+    assert!(
+        old_selection.install_record().is_err_and(|error| error
+            .to_string()
+            .contains("the manifest changed after its inventory was admitted")),
+        "a same-size replacement with restored mtime may not reuse the previous manifest's selected install value"
+    );
+    assert!(old_selection.executable_surface().is_err());
+    let changed = open_path_dependency(directory)?;
+    assert_eq!(changed.executable_surface()?.version, "0.1.1");
+    assert_ne!(changed.summary()?.identity.digest, identity.digest);
+
+    manifest.contract_metadata.install_record_digest = None;
+    fs::write(&path, manifest.to_json_string()?)?;
+    let no_install = open_path_dependency(directory)?;
+    assert!(no_install.install_record()?.is_none());
+    assert_eq!(*no_install.executable_surface()?, ExecutableSurface::of(&manifest));
+    assert_eq!(*no_install.runtime_bindings()?, bindings);
+    Ok(())
+}

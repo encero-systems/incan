@@ -10,10 +10,13 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::{fs, path::Path};
 
+use incan_semantics_core::body_ir::RuntimeCallableBinding;
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::compiler_records::{CompilerRecord, RecordFamily};
+use super::executable_surface::ExecutableSurface;
 use super::{
     AliasExport, CanonicalIdentityExport, LibraryIdentityGraph, LibraryManifest, LibraryManifestError,
     NominalTypeOriginExport, TypeParamExport, TypeRef,
@@ -52,7 +55,7 @@ pub fn read_published_install_record(
     read_facts(manifest_path, name, manifest_digest, expected_digest).map(|(record, _)| record)
 }
 
-/// Check the install binding once and return the optional named API payload beside it.
+/// Check the install binding once and return the optional named payload beside it.
 fn read_facts(
     manifest_path: &Path,
     name: &str,
@@ -96,8 +99,10 @@ fn read_facts(
 /// Exact compiler-record values grouped by family and name in publisher order for overloads.
 type PathLookup = BTreeMap<String, BTreeMap<String, Vec<String>>>;
 
-/// Prepare the path Loaf's named API lookup from the same encoded values the installed record set uses.
-pub(super) fn encode_path_lookup(records: &[CompilerRecord]) -> Result<String, LibraryManifestError> {
+/// Prepare the path Loaf's named lookup from the same encoded values the installed record set uses.
+pub(super) fn encode_path_lookup<'a>(
+    records: impl IntoIterator<Item = &'a CompilerRecord>,
+) -> Result<String, LibraryManifestError> {
     let mut lookup = PathLookup::new();
     for record in records {
         lookup
@@ -110,7 +115,7 @@ pub(super) fn encode_path_lookup(records: &[CompilerRecord]) -> Result<String, L
     serde_json::to_string(&lookup).map_err(|error| LibraryManifestError::Serialize(error.to_string()))
 }
 
-/// A path Loaf's checked install record and the exact named API lookups it authorizes.
+/// A path Loaf's checked install record and the exact named lookups it authorizes.
 #[derive(Debug)]
 pub(crate) struct PathInstallFacts {
     pub(crate) record: Arc<LoafInstallRecord>,
@@ -119,6 +124,36 @@ pub(crate) struct PathInstallFacts {
     /// The manifest format covered by the Rust re-export index and a complete public namespace directory.
     pub(crate) rust_reexport_manifest_format: Option<u32>,
     lookup: Option<PathLookup>,
+}
+
+/// Authenticated path values that executable resolution and native lowering open separately.
+pub(crate) struct PathExecutableValues<'a> {
+    descriptor: Option<&'a str>,
+    identities: &'a str,
+    bindings: &'a str,
+}
+
+impl PathExecutableValues<'_> {
+    /// Decode the Loaf's executable resolution surface, with its name and version from the admitted inventory.
+    pub(crate) fn surface(&self, name: &str, version: &str) -> Result<ExecutableSurface, LibraryManifestError> {
+        Ok(ExecutableSurface {
+            name: name.to_owned(),
+            version: version.to_owned(),
+            descriptor: self.descriptor.map(decode_lookup_value).transpose()?,
+            public_identities: decode_lookup_value(self.identities)?,
+        })
+    }
+
+    /// Decode just the Loaf's runtime callable bindings.
+    pub(crate) fn runtime_bindings(&self) -> Result<Vec<RuntimeCallableBinding>, LibraryManifestError> {
+        decode_lookup_value(self.bindings)
+    }
+}
+
+/// Decode a value from the authenticated path lookup with the compiler record codec.
+fn decode_lookup_value<T: DeserializeOwned>(value: &str) -> Result<T, LibraryManifestError> {
+    let bytes = hex::decode(value).map_err(|error| LibraryManifestError::Invalid(error.to_string()))?;
+    LibraryManifest::decode_compiler_record_value(&bytes)
 }
 
 impl PathInstallFacts {
@@ -147,7 +182,7 @@ impl PathInstallFacts {
             (None, None) => None,
             _ => {
                 return Err(LibraryManifestError::Invalid(format!(
-                    "named API records of `{name}` disagree with their selected content identity"
+                    "named records of `{name}` disagree with their selected content identity"
                 )));
             }
         };
@@ -167,22 +202,42 @@ impl PathInstallFacts {
         family: &str,
         name: &str,
     ) -> Result<Option<Vec<serde_json::Value>>, LibraryManifestError> {
-        let Some(values) = self
-            .lookup
-            .as_ref()
-            .and_then(|lookup| lookup.get(family))
-            .and_then(|family| family.get(name))
-        else {
+        let Some(values) = self.named_values(family, name) else {
             return Ok(None);
         };
         values
             .iter()
-            .map(|value| {
-                let encoded = hex::decode(value).map_err(|error| LibraryManifestError::Invalid(error.to_string()))?;
-                LibraryManifest::decode_compiler_record_value(&encoded)
-            })
+            .map(|value| decode_lookup_value(value))
             .collect::<Result<Vec<_>, _>>()
             .map(Some)
+    }
+
+    /// Select the complete path executable product, or recognize a preceding publisher that supplied none of it.
+    pub(crate) fn executable_values(
+        &self,
+        name: &str,
+    ) -> Result<Option<PathExecutableValues<'_>>, LibraryManifestError> {
+        let rows = |family: RecordFamily| self.named_values(family.as_str(), name);
+        match (
+            rows(RecordFamily::ExecutableDescriptor),
+            rows(RecordFamily::PublicIdentities),
+            rows(RecordFamily::RuntimeBindings),
+        ) {
+            (None, None, None) => Ok(None),
+            (descriptor @ (None | Some([_])), Some([identities]), Some([bindings])) => Ok(Some(PathExecutableValues {
+                descriptor: descriptor.and_then(|values| values.first()).map(String::as_str),
+                identities,
+                bindings,
+            })),
+            _ => Err(LibraryManifestError::Invalid(format!(
+                "executable records of `{name}` are incomplete or ambiguous"
+            ))),
+        }
+    }
+
+    /// Access the exact encoded values of one addressed path record.
+    fn named_values(&self, family: &str, name: &str) -> Option<&[String]> {
+        self.lookup.as_ref()?.get(family)?.get(name).map(Vec::as_slice)
     }
 
     /// Check a complete named API family without opening any value. Other families still use their prior authority.
